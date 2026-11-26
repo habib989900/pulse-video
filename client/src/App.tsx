@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
-import { actionFields } from "@hatch/space-sdk/fields" with { type: "macro" };
-import type { Actions } from "../../server/src/actions";
 
-const FIELDS = actionFields<typeof Actions>();
 
 /* ---------------- Types & catalog data ---------------- */
 
@@ -3178,7 +3175,7 @@ export function App() {
         </div>
         <div className="mx-auto max-w-6xl px-4 pb-3">
           <label className="relative block">
-            <input {...FIELDS.toggleInteraction.itemKey} aria-label="Search videos, models, tags" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+            <input aria-label="Search videos, models, tags" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
             {query
               ? <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); if (listing?.kind === "search") goTab("home"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
               : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
@@ -3508,7 +3505,7 @@ export function App() {
                 <>
                   <div className="mt-4 flex gap-2">
                     <label className="relative flex-1">
-                      <input {...FIELDS.toggleInteraction.itemKey} aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); void (async () => { if (await tryAdminCode(text)) { setSearchDraft(""); setQuery(""); goAdmin(); } else openListing({ kind: "search", name: text }); })(); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+                      <input aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); void (async () => { if (await tryAdminCode(text)) { setSearchDraft(""); setQuery(""); goAdmin(); } else openListing({ kind: "search", name: text }); })(); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
                       {searchDraft
                         ? <button type="button" aria-label="Clear search" onClick={() => { setSearchDraft(""); setQuery(""); goTab("tags"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
                         : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
