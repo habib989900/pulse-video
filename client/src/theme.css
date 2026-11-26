@@ -1,0 +1,138 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap');
+@import "tailwindcss";
+@import "tailwindcss-safe-area";
+
+@theme {
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 28px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
+  --text-4xl: 36px;
+  --text-4xl--line-height: 40px;
+  --text-5xl: 48px;
+  --text-5xl--line-height: 52px;
+  --font-display: "Archivo", system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #050505;
+  --surface: #141416;
+  --surface2: #1f1f22;
+  --text: #f5f5f5;
+  --dim: #a1a1aa;
+  --border: #26262a;
+  --accent: #f43f5e;
+  --accent2: #e11d48;
+  --radius: 14px;
+  --space-surface: var(--surface);
+  --space-surface-alt: var(--surface2);
+  --space-muted: var(--dim);
+  --space-border: var(--border);
+  --space-accent: var(--accent);
+}
+
+html, body { background: var(--bg); }
+html { scroll-behavior: auto; }
+body { font-family: system-ui, -apple-system, sans-serif; }
+.font-display { font-family: var(--font-display); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes pulse-ring { 0%{ box-shadow: 0 0 0 0 rgba(244,63,94,.45);} 100%{ box-shadow: 0 0 0 22px rgba(244,63,94,0);} }
+.play-pulse { animation: pulse-ring 1.6s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .play-pulse { animation: none; } }
+
+@keyframes loadbar { 0% { transform: scaleX(0); opacity: 1; } 70% { transform: scaleX(.85); opacity: 1; } 100% { transform: scaleX(1); opacity: .9; } }
+.loadbar { transform-origin: left; animation: loadbar .45s ease-out; }
+@media (prefers-reduced-motion: reduce) { .loadbar { animation: none; } }
+
+/* Player loading spinner: shown until playback starts and again
+   whenever the video buffers mid-play. */
+@keyframes pv-spin { to { transform: rotate(360deg); } }
+.pv-spinner { animation: pv-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .pv-spinner { animation-duration: 2.4s; } }
+
+@layer base {
+  button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) {
+    min-height: 2rem;
+  }
+}
+
+/* ---------- Light theme ----------
+   Dark is the default (:root above). The header toggle sets
+   data-theme="light" on <html> (persisted in localStorage, re-applied
+   before first paint by an inline script in index.html). The token
+   overrides flip every var(--*) surface; the remaps below then flip the
+   hardcoded dark utility classes the markup uses (text-white, zinc
+   shades, black chrome), and the restores at the end keep text light
+   where the background stays colored or dark in both themes: accent /
+   red / blue buttons, the dark red promo banner, the selected pills
+   (bg-white text-black becomes a dark pill), and the video players
+   (.pv-darkzone), which stay black in light mode too. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f4f6;
+  --surface: #ffffff;
+  --surface2: #e9e9ed;
+  --text: #17171c;
+  --dim: #5d5d68;
+  --border: #dbdbe0;
+  --accent: #e11d48;
+  --accent2: #be123c;
+}
+
+/* Remaps: dark-theme utility classes -> light-theme values. */
+:root[data-theme="light"] .text-white { color: var(--text); }
+:root[data-theme="light"] .text-zinc-200 { color: #3f3f46; }
+:root[data-theme="light"] .text-zinc-300 { color: #46464f; }
+:root[data-theme="light"] .text-zinc-400 { color: #6d6d77; }
+:root[data-theme="light"] .text-zinc-500 { color: #6d6d77; }
+:root[data-theme="light"] .placeholder\:text-zinc-500::placeholder { color: #83838d; }
+:root[data-theme="light"] .hover\:text-white:hover { color: var(--text); }
+:root[data-theme="light"] .text-amber-400 { color: #b45309; }
+:root[data-theme="light"] .text-amber-200 { color: #92400e; }
+:root[data-theme="light"] .text-red-400 { color: #dc2626; }
+:root[data-theme="light"] .text-red-300 { color: #b91c1c; }
+:root[data-theme="light"] .text-emerald-400 { color: #059669; }
+:root[data-theme="light"] .text-\[\#8ab4f8\] { color: #1a56db; }
+:root[data-theme="light"] .bg-black\/95 { background-color: rgb(255 255 255 / .94); }
+:root[data-theme="light"] .bg-black\/97 { background-color: rgb(255 255 255 / .97); }
+:root[data-theme="light"] .bg-\[\#0a0a0a\] { background-color: var(--surface); }
+:root[data-theme="light"] .bg-\[\#111111\] { background-color: var(--surface); }
+:root[data-theme="light"] .bg-\[\#101010\] { background-color: #ececf1; }
+:root[data-theme="light"] .bg-white { background-color: var(--text); }
+
+/* Restores: keep light text on backgrounds that stay colored/dark.
+   These come after the remaps (equal or higher specificity) so they win. */
+:root[data-theme="light"] .bg-\[var\(--accent\)\] { color: #fff; }
+:root[data-theme="light"] .bg-red-600 { color: #fff; }
+:root[data-theme="light"] .bg-blue-600 { color: #fff; }
+:root[data-theme="light"] .bg-\[\#b91c1c\] { color: #fff; }
+:root[data-theme="light"] .bg-white.text-black { color: #fff; }
+:root[data-theme="light"] .pv-darkzone { color: #f5f5f5; }
+:root[data-theme="light"] .pv-darkzone .text-white { color: #f5f5f5; }
+:root[data-theme="light"] .pv-darkzone .text-zinc-200 { color: #e4e4e7; }
+:root[data-theme="light"] .pv-darkzone .text-zinc-300 { color: #d4d4d8; }
+
+/* Thumbnail placeholder name ("PULSE VIDEO" shown until the photo
+   loads): sized off the tile's own width via container units, with a
+   fixed-size fallback where cqw is unsupported. The Thumb root is a
+   container (container-type: inline-size). */
+.thumb-name { font-size: 13px; font-size: clamp(10px, 5cqw, 20px); }
+
+/* A fullscreened player box sits flush: no page margin pull, no
+   rounded corners, black behind the video. */
+.pv-fs:fullscreen { margin: 0; border-radius: 0; background: #000; }
+.pv-fs:-webkit-full-screen { margin: 0; border-radius: 0; background: #000; }

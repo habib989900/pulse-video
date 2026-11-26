@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Apply the saved light/dark choice before first paint, so a
+         light-mode visitor never flashes the dark default. -->
+    <script>try { if (window.localStorage.getItem("pv-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) { /* storage unavailable */ }</script>
+    <!-- Empty inline icon: stops the browser fetching /favicon.ico, which
+         lives outside the space's routes and fails auth. -->
+    <link rel="icon" href="data:," />
+    <title>Pulse Video | Stream Free Videos in HD</title>
+    <!-- SEO baseline. The app refines every tag per view at runtime
+         (dynamic title/description/OG/canonical/JSON-LD from the open
+         video, category, model, channel, tag or feed), and the admin
+         panel's SEO settings override these site-wide values. The
+         generated sitemap and robots files live at #/sitemap.xml and
+         #/robots.txt and are downloadable from the admin SEO section. -->
+    <meta name="description" content="Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily." />
+    <meta name="keywords" content="videos, streaming, hd videos, trending videos, models, channels" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="rating" content="adult" />
+    <meta name="theme-color" content="#050505" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pulse Video" />
+    <meta property="og:title" content="Pulse Video" />
+    <meta property="og:description" content="Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Pulse Video" />
+    <meta name="twitter:description" content="Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          { "@type": "WebSite", "name": "Pulse Video", "url": "/", "potentialAction": { "@type": "SearchAction", "target": { "@type": "EntryPoint", "urlTemplate": "/search/{search_term_string}" }, "query-input": "required name=search_term_string" } },
+          { "@type": "Organization", "name": "Pulse Video", "url": "/" }
+        ]
+      }
+    </script>
+    <script src="./src/main.tsx" type="module"></script>
+  </head>
+  <body>
+    <div
+      data-generated-space-root=""
+      data-generated-space-slug="video-website"
+    ></div>
+  </body>
+</html>

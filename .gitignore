@@ -1,0 +1,25 @@
+# Dependencies & caches
+node_modules/
+.bun-cache/
+
+# Build output
+client/dist/
+client/dist-cvm/
+server/dist/
+.space-build/
+.space-build-cvm/
+
+# Local database & runtime state (contains the live site's data — never commit)
+app.db
+app.db-shm
+app.db-wal
+
+# Secrets
+.env
+.env.local
+
+# Tooling / audits
+.harness/
+audits/
+*.tsbuildinfo
+.xmds-icon
