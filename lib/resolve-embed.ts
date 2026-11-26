@@ -49,12 +49,25 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         u.search = "";
       }
       if (!/^\/embedframe\/[\w-]+/.test(u.pathname)) return empty;
-      const pageRes = await fetch(u.toString(), {
-        headers: ua,
-        redirect: "follow",
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (!pageRes.ok) return empty;
+      /* TEMPORARY diagnostics (2026-11-27): the live function returns
+         empty for this XNXX embed while the same page fetches fine
+         from elsewhere — log what the function actually sees. Remove
+         once the cause is found. */
+      let pageRes: Response;
+      try {
+        pageRes = await fetch(u.toString(), {
+          headers: ua,
+          redirect: "follow",
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+      } catch (err) {
+        console.log(`[diag-xnxx] page fetch THREW err=${err instanceof Error ? err.message : String(err)}`);
+        return empty;
+      }
+      if (!pageRes.ok) {
+        console.log(`[diag-xnxx] page status=${pageRes.status}`);
+        return empty;
+      }
       const html = await pageRes.text();
       const grabCall = (name: string): string | null => {
         const m = html.match(new RegExp(`${name}\\('([^']+)'\\)`));
@@ -62,6 +75,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       };
       const low = grabCall("setVideoUrlLow");
       const high = grabCall("setVideoUrlHigh");
+      console.log(`[diag-xnxx] page status=${pageRes.status} htmlLen=${html.length} low=${!!low} high=${!!high} hls=${!!grabCall("setVideoHLS")}`);
       const fast = low ?? high;
       if (!fast) return empty;
       /* Every resolution this source offers: the two MP4s PLUS
