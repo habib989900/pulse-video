@@ -34,6 +34,21 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
     };
+    /* Full browser header set: the function runs on a datacenter IP
+       and Node's fetch sends a minimal, bot-like header set
+       (notably `accept-language: *`). XNXX answered the bare-UA
+       fetch with 404 while the same URL returns 200 to a real
+       browser — so the embed-page request now carries the headers
+       a browser navigation sends. */
+    const browserHeaders = {
+      ...ua,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Upgrade-Insecure-Requests": "1",
+    };
     /* xnxx.com: its embed player refuses playback inside third-party
        frames ("Blocked content. Contact the site owner to fix"), but
        the embed page itself names the direct MP4 files in plain
@@ -56,7 +71,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       let pageRes: Response;
       try {
         pageRes = await fetch(u.toString(), {
-          headers: ua,
+          headers: browserHeaders,
           redirect: "follow",
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
