@@ -8,7 +8,7 @@
 // capped at 8 s each so a resolve stays inside it.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { ACTIONS } from "../lib/actions";
+import { ACTIONS } from "../lib/actions.js";
 
 export const config = { maxDuration: 10 };
 

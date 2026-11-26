@@ -7,8 +7,8 @@
 // so there is no server-driven invalidation to replace.
 
 import { z } from "zod";
-import { checkAdminCode, issueAdminToken, requireAdmin } from "./admin-auth";
-import { resolveEmbedFile, type EmbedFileResult } from "./resolve-embed";
+import { checkAdminCode, issueAdminToken, requireAdmin } from "./admin-auth.js";
+import { resolveEmbedFile, type EmbedFileResult } from "./resolve-embed.js";
 import {
   clearHistory,
   getAdminPayload,
@@ -18,7 +18,7 @@ import {
   saveAdminPayload,
   toggleInteraction,
   type InteractionKind,
-} from "./store";
+} from "./store.js";
 
 const kindEnum = z.enum(["like", "save", "follow", "history"]);
 
