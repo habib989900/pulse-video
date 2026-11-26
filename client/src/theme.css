@@ -64,6 +64,12 @@ body { font-family: system-ui, -apple-system, sans-serif; }
 .pv-spinner { animation: pv-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .pv-spinner { animation-duration: 2.4s; } }
 
+/* Double-tap seek cue ("-10s" / "+10s"): pops in, then fades out.
+   The element is removed by a timeout just after the animation ends. */
+@keyframes pv-seek-flash { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+.pv-seek-flash { animation: pv-seek-flash .7s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .pv-seek-flash { animation: none; opacity: 1; } }
+
 @layer base {
   button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) {
     min-height: 2rem;

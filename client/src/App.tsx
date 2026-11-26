@@ -1,610 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import {
+  buildEffective, buildRobotsTxt, buildSitemapXml, dateFromDays, DEFAULT_ADMIN_STATE,
+  DEFAULT_BUTTONS, DEFAULT_SEO, DEFAULT_TEXTS,
+  emptyAdminVideo, extractEmbedSrc, fmtDur, fmtViews, isVideoFileUrl, isoDateFromDays,
+  isoDuration, parseAdminState, parseDateValue, parseDuration, parseViews, publicUrl,
+  resolveEmbed, slugify, videoToAdmin, VIDEOS, CATEGORIES, CREATORS, CHANNELS, TAGS,
+} from "../../lib/catalog";
+import type { AdminState, AdminVideo, Video } from "../../lib/catalog";
 
 
-/* ---------------- Types & catalog data ---------------- */
-
-type Video = {
-  id: string;
-  title: string;
-  duration: string;
-  durationSec: number;
-  views: number;
-  age: string;
-  days: number;
-  rating: number;
-  hd: boolean;
-  category: string;
-  tags: string[];
-  creator: string;
-  g: [string, string];
-  /* Admin-managed fields. Catalog videos carry the defaults from
-     withDefaults(); videos added or edited in the admin panel carry real
-     values, where null means "not provided" and the UI hides that piece. */
-  embedUrl: string | null;
-  description: string | null;
-  thumbnailUrl: string | null;
-  seoTitle: string | null;
-  seoDescription: string | null;
-  featured: boolean;
-  badgeNew: boolean;
-  channel: string | null;
-  custom: boolean;
-  hasViews: boolean;
-  hasDate: boolean;
-  hasRating: boolean;
-};
-
-type RawVideo = Omit<Video, "embedUrl" | "description" | "thumbnailUrl" | "seoTitle" | "seoDescription" | "featured" | "badgeNew" | "channel" | "custom" | "hasViews" | "hasDate" | "hasRating">;
-
-const withDefaults = (v: RawVideo): Video => ({
-  embedUrl: null, description: null, thumbnailUrl: null, seoTitle: null, seoDescription: null,
-  featured: false, badgeNew: false, channel: null, custom: false,
-  hasViews: true, hasDate: true, hasRating: true,
-  ...v,
-});
-
-const fmtViews = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : `${n}`;
-const fmtDur = (s: number) => s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-const ageFromDays = (d: number) =>
-  d <= 0 ? "12 hours ago" : d === 1 ? "1 day ago" : d < 30 ? `${d} days ago` : d < 60 ? "1 month ago" : d < 365 ? `${Math.floor(d / 30)} months ago` : d < 730 ? "1 year ago" : `${Math.floor(d / 365)} years ago`;
-
-/* First 24 videos: original catalog entries — ids, titles and creators preserved exactly. */
-const BASE_VIDEOS: RawVideo[] = [
-  { id: "v1", title: "Istanbul in 24 Hours — The Ultimate City Walk", duration: "13:58", durationSec: 838, views: 352000, age: "2 weeks ago", days: 14, rating: 91, hd: true, category: "Travel", tags: ["city guide", "walking tour", "4k"], creator: "Wander Frame", g: ["#7c2d12", "#f59e0b"] },
-  { id: "v2", title: "30-Minute Creamy Pasta Anyone Can Master", duration: "10:24", durationSec: 624, views: 1200000, age: "3 days ago", days: 3, rating: 96, hd: true, category: "Cooking", tags: ["pasta", "quick meals", "italian"], creator: "Golden Ladle", g: ["#7f1d1d", "#ef4444"] },
-  { id: "v3", title: "Full Body Strength — No Equipment Needed", duration: "22:29", durationSec: 1349, views: 864000, age: "1 week ago", days: 7, rating: 94, hd: true, category: "Fitness", tags: ["home workout", "strength", "beginner"], creator: "Pulse Fit", g: ["#14532d", "#22c55e"] },
-  { id: "v4", title: "Lo-Fi Beats to Focus — Sunset Session Vol. 4", duration: "52:43", durationSec: 3163, views: 2100000, age: "1 month ago", days: 30, rating: 98, hd: true, category: "Music", tags: ["lofi", "focus", "chill"], creator: "Night Tapes", g: ["#581c87", "#a855f7"] },
-  { id: "v5", title: "Building a Tiny Cabin in the Alps — Ep. 1", duration: "18:07", durationSec: 1087, views: 640000, age: "5 days ago", days: 5, rating: 93, hd: true, category: "DIY", tags: ["cabin", "woodwork", "off grid"], creator: "Timber & Co", g: ["#0c4a6e", "#38bdf8"] },
-  { id: "v6", title: "Street Photography Masterclass: Light & Shadow", duration: "15:31", durationSec: 931, views: 98000, age: "4 days ago", days: 4, rating: 89, hd: false, category: "Photography", tags: ["street", "composition", "35mm"], creator: "Aperture Lab", g: ["#27272a", "#e4e4e7"] },
-  { id: "v7", title: "The Untold History of the Silk Road", duration: "26:19", durationSec: 1579, views: 1500000, age: "2 months ago", days: 60, rating: 97, hd: true, category: "Documentary", tags: ["history", "asia", "trade"], creator: "Deep Dive Docs", g: ["#713f12", "#eab308"] },
-  { id: "v8", title: "Speedrun World Record Attempt — Live Breakdown", duration: "11:06", durationSec: 666, views: 26000, age: "4 months ago", days: 120, rating: 87, hd: false, category: "Gaming", tags: ["speedrun", "record", "live"], creator: "Pixel Rush", g: ["#1e3a8a", "#3b82f6"] },
-  { id: "v9", title: "Morning Yoga Flow for Energy & Calm", duration: "12:31", durationSec: 751, views: 754000, age: "3 months ago", days: 90, rating: 95, hd: true, category: "Fitness", tags: ["yoga", "morning", "mobility"], creator: "Pulse Fit", g: ["#831843", "#ec4899"] },
-  { id: "v10", title: "Tokyo Night Markets — What $20 Buys You", duration: "17:25", durationSec: 1045, views: 992000, age: "2 years ago", days: 730, rating: 92, hd: true, category: "Travel", tags: ["tokyo", "street food", "budget"], creator: "Wander Frame", g: ["#500724", "#f43f5e"] },
-  { id: "v11", title: "Sourdough for Beginners — Day 1 to First Loaf", duration: "30:55", durationSec: 1855, views: 430000, age: "6 days ago", days: 6, rating: 94, hd: true, category: "Cooking", tags: ["baking", "sourdough", "bread"], creator: "Golden Ladle", g: ["#78350f", "#fbbf24"] },
-  { id: "v12", title: "Inside a Tokyo Jazz Bar — Vinyl Only Night", duration: "41:49", durationSec: 2509, views: 187000, age: "1 year ago", days: 365, rating: 90, hd: true, category: "Music", tags: ["jazz", "vinyl", "tokyo"], creator: "Night Tapes", g: ["#111827", "#6366f1"] },
-  { id: "v13", title: "Restoring a 1968 Classic Car — Full Timelapse", duration: "24:12", durationSec: 1452, views: 2800000, age: "8 months ago", days: 240, rating: 96, hd: true, category: "DIY", tags: ["restoration", "cars", "timelapse"], creator: "Garage Stories", g: ["#7f1d1d", "#f97316"] },
-  { id: "v14", title: "How Airports Actually Work — Behind the Scenes", duration: "19:44", durationSec: 1184, views: 510000, age: "3 weeks ago", days: 21, rating: 91, hd: false, category: "Documentary", tags: ["aviation", "logistics", "explained"], creator: "Deep Dive Docs", g: ["#164e63", "#06b6d4"] },
-  { id: "v15", title: "Procreate Portrait Painting — Start to Finish", duration: "16:03", durationSec: 963, views: 76000, age: "1 week ago", days: 7, rating: 88, hd: false, category: "Art", tags: ["digital art", "portrait", "tutorial"], creator: "Aperture Lab", g: ["#4a044e", "#d946ef"] },
-  { id: "v16", title: "Desert Camping Under the Milky Way", duration: "21:37", durationSec: 1297, views: 308, age: "1 week ago", days: 7, rating: 85, hd: false, category: "Travel", tags: ["camping", "stars", "desert"], creator: "Wander Frame", g: ["#172554", "#818cf8"] },
-  { id: "v17", title: "5-Ingredient Desserts That Look Fancy", duration: "9:48", durationSec: 588, views: 1900000, age: "2 weeks ago", days: 14, rating: 93, hd: true, category: "Cooking", tags: ["dessert", "quick meals", "baking"], creator: "Golden Ladle", g: ["#881337", "#fb7185"] },
-  { id: "v18", title: "Beginner's Guide to Astrophotography", duration: "27:52", durationSec: 1672, views: 145000, age: "5 months ago", days: 150, rating: 90, hd: true, category: "Photography", tags: ["astro", "night", "tutorial"], creator: "Aperture Lab", g: ["#020617", "#38bdf8"] },
-  { id: "v19", title: "Sunrise Hike to a Hidden Waterfall", duration: "14:22", durationSec: 862, views: 421000, age: "2 days ago", days: 2, rating: 93, hd: true, category: "Travel", tags: ["hiking", "waterfall", "4k"], creator: "Wander Frame", g: ["#134e4a", "#2dd4bf"] },
-  { id: "v20", title: "One-Pot Weeknight Dinners — 3 Ways", duration: "12:05", durationSec: 725, views: 689000, age: "3 days ago", days: 3, rating: 95, hd: true, category: "Cooking", tags: ["one pot", "quick meals", "dinner"], creator: "Golden Ladle", g: ["#7c2d12", "#fb923c"] },
-  { id: "v21", title: "Desk Setup Tour — Cable-Free Edition", duration: "9:37", durationSec: 577, views: 233000, age: "4 days ago", days: 4, rating: 90, hd: false, category: "Tech", tags: ["desk setup", "tech", "minimal"], creator: "Studio Bloom", g: ["#1e293b", "#94a3b8"] },
-  { id: "v22", title: "Jazz Piano for Beginners — First Chords", duration: "20:14", durationSec: 1214, views: 312000, age: "6 days ago", days: 6, rating: 92, hd: true, category: "Music", tags: ["piano", "jazz", "tutorial"], creator: "Night Tapes", g: ["#312e81", "#818cf8"] },
-  { id: "v23", title: "Backyard Garden Makeover on a Budget", duration: "16:48", durationSec: 1008, views: 158000, age: "5 days ago", days: 5, rating: 91, hd: false, category: "Gardening", tags: ["garden", "makeover", "budget"], creator: "Meadow Makers", g: ["#365314", "#a3e635"] },
-  { id: "v24", title: "Marathon Training — Week 8 Long Run", duration: "28:03", durationSec: 1683, views: 502000, age: "1 week ago", days: 7, rating: 94, hd: true, category: "Fitness", tags: ["running", "marathon", "endurance"], creator: "Pulse Fit", g: ["#7f1d1d", "#f87171"] },
-];
-
-const CATEGORIES: { name: string; count: string }[] = [
-  { name: "Travel", count: "48K" }, { name: "Cooking", count: "25K" }, { name: "Fitness", count: "24K" },
-  { name: "Music", count: "15K" }, { name: "Documentary", count: "14K" }, { name: "Gaming", count: "14K" },
-  { name: "DIY", count: "12K" }, { name: "Photography", count: "12K" }, { name: "Art", count: "10K" },
-  { name: "Comedy", count: "9.4K" }, { name: "Tech", count: "8.2K" }, { name: "Nature", count: "7.6K" },
-  { name: "Sports", count: "7.5K" }, { name: "Science", count: "7.1K" }, { name: "Fashion", count: "6.9K" },
-  { name: "History", count: "6.2K" }, { name: "Education", count: "5.9K" }, { name: "Pets", count: "5.1K" },
-  { name: "Cars", count: "4.9K" }, { name: "Dance", count: "4.6K" }, { name: "Gardening", count: "4.4K" },
-  { name: "Business", count: "4K" }, { name: "Movies", count: "3.8K" }, { name: "News", count: "3.2K" },
-  { name: "Animation", count: "3.1K" }, { name: "Architecture", count: "2.9K" }, { name: "Astronomy", count: "2.8K" },
-  { name: "Beauty", count: "2.7K" }, { name: "Books", count: "2.6K" }, { name: "Camping", count: "2.5K" },
-  { name: "Cycling", count: "2.4K" }, { name: "Design", count: "2.4K" }, { name: "Electronics", count: "2.3K" },
-  { name: "Farming", count: "2.2K" }, { name: "Fishing", count: "2.1K" }, { name: "Football", count: "2.1K" },
-  { name: "Golf", count: "2K" }, { name: "Health", count: "2K" }, { name: "Home Decor", count: "1.9K" },
-  { name: "Investing", count: "1.9K" }, { name: "Languages", count: "1.8K" }, { name: "Lifestyle", count: "1.8K" },
-  { name: "Magic", count: "1.7K" }, { name: "Martial Arts", count: "1.7K" }, { name: "Meditation", count: "1.6K" },
-  { name: "Motorcycles", count: "1.6K" }, { name: "Ocean", count: "1.5K" }, { name: "Painting", count: "1.5K" },
-  { name: "Piano", count: "1.4K" }, { name: "Podcasts", count: "1.4K" }, { name: "Politics", count: "1.3K" },
-  { name: "Programming", count: "1.3K" }, { name: "Real Estate", count: "1.2K" }, { name: "Recipes", count: "1.2K" },
-  { name: "Robotics", count: "1.1K" }, { name: "Skateboarding", count: "1.1K" }, { name: "Skiing", count: "1K" },
-  { name: "Space", count: "1K" }, { name: "Surfing", count: "980" }, { name: "Theater", count: "950" },
-  { name: "Trains", count: "920" }, { name: "Vegan", count: "900" }, { name: "Weather", count: "880" },
-  { name: "Weddings", count: "850" }, { name: "Wildlife", count: "830" }, { name: "Woodworking", count: "800" },
-  { name: "Yoga", count: "780" }, { name: "Zumba", count: "750" }, { name: "Board Games", count: "720" },
-  { name: "Chess", count: "700" }, { name: "Comics", count: "680" }, { name: "Drones", count: "650" },
-  { name: "Esports", count: "620" }, { name: "Aquariums", count: "600" },
-];
-
-/* Channel video counts match the owning model's count, so the number a channel
-   shows is the same catalog the channel page lists from. */
-const CHANNELS: { name: string; videos: string; creator: string; g: [string, string] }[] = [
-  { name: "Wander Frame TV", videos: "385", creator: "Wander Frame", g: ["#7c2d12", "#f59e0b"] },
-  { name: "Golden Ladle Kitchen", videos: "140", creator: "Golden Ladle", g: ["#7f1d1d", "#ef4444"] },
-  { name: "Night Tapes", videos: "115", creator: "Night Tapes", g: ["#581c87", "#a855f7"] },
-  { name: "Deep Dive Docs", videos: "98", creator: "Deep Dive Docs", g: ["#713f12", "#eab308"] },
-  { name: "Pulse Fit", videos: "116", creator: "Pulse Fit", g: ["#14532d", "#22c55e"] },
-  { name: "Timber & Co", videos: "87", creator: "Timber & Co", g: ["#0c4a6e", "#38bdf8"] },
-  { name: "Aperture Lab", videos: "129", creator: "Aperture Lab", g: ["#27272a", "#e4e4e7"] },
-  { name: "Garage Stories", videos: "64", creator: "Garage Stories", g: ["#7f1d1d", "#f97316"] },
-];
-
-const BASE_TAGS: { name: string; count: number }[] = [
-  { name: "travel", count: 34061 }, { name: "cooking", count: 18475 }, { name: "workout", count: 15496 },
-  { name: "4k", count: 9397 }, { name: "tutorial", count: 8778 }, { name: "live", count: 8204 },
-  { name: "asmr", count: 7610 }, { name: "beginner", count: 7302 }, { name: "comedy", count: 6980 },
-  { name: "documentary", count: 6544 }, { name: "gaming", count: 6109 }, { name: "history", count: 5877 },
-  { name: "jazz", count: 5230 }, { name: "lofi", count: 4988 }, { name: "nature", count: 4712 },
-  { name: "photography", count: 4401 }, { name: "quick meals", count: 4105 }, { name: "street food", count: 3866 },
-  { name: "timelapse", count: 3540 }, { name: "vlog", count: 3208 }, { name: "yoga", count: 2911 },
-  { name: "zero waste", count: 1204 },
-];
-
-const BASE_CREATORS: { name: string; videos: number; followers: string; g: [string, string] }[] = [
-  { name: "Wander Frame", videos: 385, followers: "48K", g: ["#f43f5e", "#f59e0b"] },
-  { name: "Golden Ladle", videos: 140, followers: "21K", g: ["#ef4444", "#fbbf24"] },
-  { name: "Aperture Lab", videos: 129, followers: "19K", g: ["#6366f1", "#38bdf8"] },
-  { name: "Pulse Fit", videos: 116, followers: "28K", g: ["#22c55e", "#84cc16"] },
-  { name: "Night Tapes", videos: 115, followers: "17K", g: ["#a855f7", "#ec4899"] },
-  { name: "Deep Dive Docs", videos: 98, followers: "11K", g: ["#eab308", "#f97316"] },
-  { name: "Timber & Co", videos: 87, followers: "9.4K", g: ["#38bdf8", "#22d3ee"] },
-  { name: "Pixel Rush", videos: 82, followers: "8.1K", g: ["#3b82f6", "#8b5cf6"] },
-  { name: "Garage Stories", videos: 64, followers: "6.3K", g: ["#f97316", "#ef4444"] },
-  { name: "Studio Bloom", videos: 57, followers: "4.2K", g: ["#ec4899", "#f43f5e"] },
-  { name: "Harbor Lights", videos: 43, followers: "3.1K", g: ["#06b6d4", "#3b82f6"] },
-  { name: "Meadow Makers", videos: 19, followers: "1.2K", g: ["#84cc16", "#22c55e"] },
-];
-
-/* Deterministic generator for the expanded sample catalog (general-audience entries). */
-function mulberry(seed: number) {
-  return () => {
-    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const EXTRA_CREATOR_NAMES = [
-  "Cedar Journal", "Blue Hour Films", "Kitchen Atlas", "Summit Reel", "Canvas North", "Echo Trails",
-  "Metro Lens", "Wild Fern", "Orbit Works", "Paper Plane Co", "Iron Peak", "Velvet Frame",
-  "Northlight", "Copper Canyon", "Studio Fern", "Atlas & Pine", "Riverstone", "Golden Hour Co",
-  "Field Notes TV", "Lantern Media", "Highland Reel", "Marble & Oak", "Silverline", "Open Road Films",
-];
-const CREATOR_GRADIENTS: [string, string][] = [
-  ["#0ea5e9", "#6366f1"], ["#f59e0b", "#ef4444"], ["#10b981", "#0ea5e9"], ["#8b5cf6", "#ec4899"],
-  ["#f97316", "#facc15"], ["#06b6d4", "#22c55e"], ["#e11d48", "#7c3aed"], ["#334155", "#0ea5e9"],
-];
-const CREATORS: { name: string; videos: number; followers: string; g: [string, string] }[] = [
-  ...BASE_CREATORS,
-  ...EXTRA_CREATOR_NAMES.map((name, i) => ({
-    name,
-    videos: 12 + Math.floor(mulberry(500 + i)() * 60),
-    followers: `${(1 + mulberry(900 + i)() * 9).toFixed(1).replace(/\.0$/, "")}K`,
-    g: CREATOR_GRADIENTS[i % CREATOR_GRADIENTS.length] as [string, string],
-  })),
-];
-
-const GEN_SPECS: { cat: string; titles: string[]; tags: string[]; grads: [string, string][] }[] = [
-  { cat: "Travel", tags: ["city guide", "walking tour", "budget", "hidden gems", "road trip", "vlog"], grads: [["#7c2d12", "#f59e0b"], ["#134e4a", "#2dd4bf"], ["#500724", "#f43f5e"], ["#172554", "#818cf8"]], titles: ["Lisbon on Foot — Tram Lines & Tile Streets", "48 Hours in Kyoto — Temples, Markets & Rain", "Iceland Ring Road — Waterfalls in One Day", "Marrakech Medina — A First-Timer's Walk", "The Cheapest Way Across the Swiss Alps", "Hanoi Old Quarter — Dawn to Midnight", "Patagonia Wind — Hiking the W Trek", "Venice Without the Crowds — Back Canal Route", "Cape Town Table Mountain — Cable Car Down", "Seoul Subway Challenge — 10 Stops, 10 Snacks", "Banff in Winter — Frozen Lakes & Hot Springs", "Petra by Back Door — The Monastery Trail", "Mexico City Markets — A Local's Morning", "Faroe Islands — Driving the Buttercup Routes", "Sri Lanka by Train — Ella to Kandy in 4K", "Porto in the Rain — Bridges & Bookshops", "Namibia Desert Drive — Dunes at Sunrise", "Bangkok Canal Boats — The Slow Commute", "Georgia's Caucasus — Kazbegi in a Day", "New Zealand South Island — Van Life Week 3"] },
-  { cat: "Cooking", tags: ["quick meals", "baking", "one pot", "street food", "tutorial", "asmr"], grads: [["#7f1d1d", "#ef4444"], ["#78350f", "#fbbf24"], ["#881337", "#fb7185"], ["#7c2d12", "#fb923c"]], titles: ["Crispy Rice Bowls — Weeknight Fix", "Hand-Pulled Noodles From Scratch", "The Fluffiest Soufflé Pancakes — Tested 9 Ways", "Fermented Hot Sauce — Week 1 to Bottling", "Grandma's Dumpling Folding, Frame by Frame", "Cast Iron Pizza — Blistered Crust at Home", "Knife Skills — The Only 5 Cuts You Need", "Miso Everything — 4 Glazes, 1 Jar", "Sourdough Discard Crackers — Zero Waste", "Thai Basil Stir-Fry — Wok Hei at Home", "Perfect Soft-Boiled Eggs — Timing Chart", "Homemade Ricotta — Easier Than You Think", "Chili Crisp Three Ways — Mild to Wild", "The 3-Ingredient Chocolate Mousse", "Pickle Anything — A Beginner's Brine Guide", "Sheet-Pan Gnocchi With Burst Tomatoes", "Biryani Layering — Dum Style, Step by Step", "Cold Brew Tonic — Coffee Shop Copycat", "Empanada Dough That Never Tears", "Roast Chicken Science — Dry Brine Results"] },
-  { cat: "Fitness", tags: ["home workout", "strength", "beginner", "mobility", "endurance", "yoga"], grads: [["#14532d", "#22c55e"], ["#831843", "#ec4899"], ["#7f1d1d", "#f87171"], ["#0c4a6e", "#38bdf8"]], titles: ["Kettlebell Basics — The Swing, Done Right", "Core Finisher — No Crunches", "Desk Mobility Routine — Undo 8 Hours of Sitting", "Couch to 5K — Week 1, Run/Walk Plan", "Resistance Band Upper Body — Full Session", "Hip Opener Flow — Daily Practice", "Pull-Up Progression — From Dead Hang to First Rep", "Low-Impact Cardio — Apartment Friendly", "Squat Form Check — 5 Common Fixes", "Breathwork for Recovery — Box Breathing Guide", "Trail Running Drills — Downhill Technique", "Pilates Wall Routine — Full Session", "Grip Strength — Farmer's Carry Variations", "Balance Training for Runners", "Sunrise Stretch — 7 Gentle Moves", "Dumbbell Complex — Full Body Session", "Posture Reset — Thoracic Mobility", "Zone 2 Cardio Explained — With Heart Rate Zones", "Single-Leg Strength — Bulletproof Knees", "Evening Wind-Down Yoga — Sleep Edition"] },
-  { cat: "Music", tags: ["lofi", "jazz", "vinyl", "live", "piano", "chill"], grads: [["#581c87", "#a855f7"], ["#111827", "#6366f1"], ["#312e81", "#818cf8"], ["#500724", "#f43f5e"]], titles: ["Vinyl Haul — 12 Records, One Crate", "How a Jazz Trio Rehearses — Fly on the Wall", "Chillhop Mix — Rainy Window Session", "Modular Synth Jam — One Take, No Edits", "Classical Guitar — Asturias, Slow Practice", "Drum Grooves From Around the World", "Building a Beat From Field Recordings", "Choir in a Parking Garage — Natural Reverb", "Piano Covers — Movie Themes by Ear", "The History of the Mixtape — Mini Doc", "Busking in Berlin — A Day's Earnings", "Analog Tape Loops — Ambient Session 9", "Trumpet Practice Routine — Tone First", "Lo-Fi Guitar Loops — Chords Over Rain", "Inside a Vinyl Pressing Plant", "Folk Songs of the Andes — Live Set", "Music Theory — Modes in Plain English", "Sampling Vinyl Legally — Producer Breakdown", "Handpan at Dawn — Rooftop Session", "Orchestra Rehearsal — Mahler 5, Day 1"] },
-  { cat: "Documentary", tags: ["history", "explained", "nature", "science", "aviation", "documentary"], grads: [["#713f12", "#eab308"], ["#164e63", "#06b6d4"], ["#14532d", "#84cc16"], ["#27272a", "#e4e4e7"]], titles: ["How Lighthouses Survived the LED Age", "The Last Night Train in Europe", "Rebuilding a Coral Reef — Year Two", "Why Airports Paint Planes White", "The Seed Vault Keepers of Svalbard", "Street Markets That Never Sleep", "How Bridges Are Inspected — Rope Access", "The Town That Prints Its Own Money", "Volcano Watchers — Living on the Rim", "Inside a Submarine Rescue Drill", "The Cartographers of OpenStreetMap", "How Opera Houses Tune a Room", "Beekeepers of the Rooftops", "The Ferries of the Bosphorus", "Restoring Apollo-Era Film — Frame by Frame", "How Weather Balloons Are Tracked", "The Night Shift at a Whale Sanctuary", "Water Towers — An Accidental History", "The People Who Tune Grand Pianos", "How Deep-Sea Cables Get Repaired"] },
-  { cat: "Gaming", tags: ["speedrun", "live", "record", "esports", "retro", "gaming"], grads: [["#1e3a8a", "#3b82f6"], ["#4a044e", "#d946ef"], ["#14532d", "#22c55e"], ["#7f1d1d", "#f97316"]], titles: ["Any% Speedrun — New Route Explained", "Retro Console Restoration — Yellowed Plastic Fix", "Ranked Climb — Diamond in 30 Days, Day 12", "Indie Roguelike Marathon — 6 Games, One Night", "Controller Modding — Hall Effect Upgrade", "Boss Fight Breakdown — Frame Data Deep Dive", "City Builder Challenge — No Roads Allowed", "LAN Party Documentary — 2004 to Now", "Puzzle Game Design — Why Sokoban Endures", "VR Rhythm Session — Expert+ Full Combo", "Game Sound Design — Foley From Kitchen Items", "Esports Finals — Crowd Cam Full Match", "Permadeath Run — Episode 7, The Swamp", "Handheld Collection Tour — 40 Devices", "Mod Showcase — Total Conversion, First Look", "Co-op Chaos — Overcooked-Style Kitchen Sim", "Achievement Hunting — The 0.1% Club", "Arcade High Scores — Twin Galaxies Stories", "Building a Racing Rig From Scrap", "Speedrun Practice — Splits & Resets"] },
-  { cat: "DIY", tags: ["woodwork", "restoration", "cabin", "off grid", "timelapse", "workshop"], grads: [["#0c4a6e", "#38bdf8"], ["#7f1d1d", "#f97316"], ["#365314", "#a3e635"], ["#78350f", "#fbbf24"]], titles: ["Workbench Build — Laminated Top, One Weekend", "Rust Removal — Electrolysis Tank Test", "Tiny House Framing — Walls Up in a Day", "Sharpening Chisels — Mirror Edge Method", "Solar Shed — 400W Off-Grid Setup", "Leather Tool Roll — Hand Stitched", "Rescuing a Water-Damaged Dresser", "Japanese Joinery — No Nails, No Glue", "Concrete Planter Molds — Silicone Master", "Bicycle Frame Respray — Rattle Can Pro", "Greenhouse From Old Windows", "Knife Handle From a Fallen Oak", "LED Shop Lights — Shadowless Bench", "Rain Barrel System — First Flush Diverter", "Reclaimed Pallet Sofa — Outdoor Build", "Dovetails by Hand — Third Attempt", "Workshop Dust Collection on a Budget", "Copper Pipe Lamp — Patina Finish", "Staircase Repair — Squeak Elimination", "Tool Wall — French Cleat Everything"] },
-  { cat: "Photography", tags: ["street", "composition", "astro", "night", "tutorial", "35mm"], grads: [["#27272a", "#e4e4e7"], ["#020617", "#38bdf8"], ["#4a044e", "#d946ef"], ["#713f12", "#eab308"]], titles: ["Film vs Digital — Same Street, Same Hour", "Long Exposure Rivers — ND Filter Guide", "Portrait Lighting With One Window", "Developing Color Film at Home — C-41", "The Contact Sheet — Editing Like a Magnum Photographer", "Milky Way Over the Salt Flats", "Instant Film Revival — Chemistry Explained", "Street Layers — Foreground, Subject, Background", "Golden Hour Is a Lie — Blue Hour Portraits", "Macro on a Budget — Reverse Lens Trick", "Drone-Free Aerials — Kite Photography", "Black & White Conversion — Channel Mixing", "Night Markets on Medium Format", "The 28mm Manifesto — Wide Street Work", "Restoring Faded Family Slides", "Pinhole Camera From a Coffee Tin", "Fog Photography — Exposure Compensation", "Sports Sideline — Amateur League Access", "Print Your Work — Paper Choices Matter", "Astro Landscapes — Foreground Blending"] },
-  { cat: "Art", tags: ["digital art", "portrait", "tutorial", "timelapse", "painting", "sketchbook"], grads: [["#4a044e", "#d946ef"], ["#881337", "#fb7185"], ["#312e81", "#818cf8"], ["#365314", "#a3e635"]], titles: ["Watercolor Skies — Wet on Wet Control", "Sketchbook Tour — 100 Days of Hands", "Oil Portrait Underpainting — Grisaille", "Ink Wash Landscapes — 3 Values Only", "Character Design — Silhouette First", "Mural Painting — Grid Transfer Method", "Charcoal Figure Study — 25 Minute Pose", "Color Theory — Limited Palette Challenge", "Paper Marbling — Suminagashi Basics", "Digital Sculpting — First Head, Timelapse", "Botanical Illustration — Leaf Veins", "Screen Printing at Home — 2 Colors", "En Plein Air — Harbor at 6 AM", "Calligraphy Drills — Pressure & Release", "Mixed Media Collage — Found Paper", "Anatomy for Artists — The Ribcage", "Gouache Still Life — Matte & Opaque", "Urban Sketching — Ink Then Wash", "Pottery Wheel — Centering Clay, Finally", "Textile Dyeing — Indigo Vat Day"] },
-  { cat: "Tech", tags: ["desk setup", "tech", "minimal", "programming", "gadgets", "tutorial"], grads: [["#1e293b", "#94a3b8"], ["#164e63", "#06b6d4"], ["#312e81", "#818cf8"], ["#14532d", "#22c55e"]], titles: ["Mechanical Keyboard Build — Lubed & Filmed", "Home Server From a Dead Laptop", "I Automated My Morning With 40 Lines of Code", "E-Ink Dashboard — Weather, Calendar, Trains", "NAS vs Cloud — 2-Year Cost Breakdown", "Linux on a 12-Year-Old ThinkPad", "Smart Lights Without a Hub", "Backup Strategy — 3-2-1 for Creators", "USB-C Everything — Cable Audit", "Building a Mechanical Watch From a Kit", "Local AI on a Mini PC — What Actually Runs", "Standing Desk Cable Tray — Before/After", "Password Managers Compared — Migration Diary", "Retro Handheld Emulation — Setup Guide", "Monitor Light Bars — Eye Strain Test", "Self-Hosted Photo Library — Year One", "The $35 Microphone That Beat My Studio Mic", "Ergonomic Splits — One Month In", "Old Phone as Security Camera — Full Setup", "Wi-Fi Dead Zones — Heatmap My Apartment"] },
-  { cat: "Gardening", tags: ["garden", "makeover", "budget", "zero waste", "seasonal", "tutorial"], grads: [["#365314", "#a3e635"], ["#14532d", "#22c55e"], ["#78350f", "#fbbf24"], ["#134e4a", "#2dd4bf"]], titles: ["Compost in a Small Yard — No Smell Method", "Tomato Pruning — Suckers Explained", "Herb Spiral Build — One Afternoon", "Rain Garden for a Flooded Corner", "Seed Starting Indoors — LED Shelf Setup", "Pollinator Patch From a Lawn Strip", "Espalier Apple Tree — Year 1 Training", "Soil Test Results — Amending Clay", "Cut Flower Garden — Succession Planting", "Greenhouse Ventilation — Solar Fan Hack", "Potato Towers — Harvest Weigh-In", "Native Hedge Planting — Wildlife Corridor", "Drip Irrigation From a Single Tap", "Saving Seeds — Tomatoes & Beans", "Winter Sowing in Milk Jugs", "Mushroom Logs — Shiitake Inoculation", "Balcony Citrus — Overwintering Indoors", "No-Dig Beds — Cardboard & Compost", "Garlic Planting — Hardneck vs Softneck", "Orchard Pruning — Open Center Shape"] },
-  { cat: "Comedy", tags: ["comedy", "sketch", "vlog", "live", "challenge", "stand-up"], grads: [["#713f12", "#eab308"], ["#831843", "#ec4899"], ["#1e3a8a", "#3b82f6"], ["#7f1d1d", "#f87171"]], titles: ["Customer Service Voice — A Sketch", "Two Chefs, One Recipe, Zero Communication", "The Group Chat — Every Character, One Actor", "Productivity Gurus Try a Real Job", "Airport Announcements But Honest", "Dad Reviews Video Games — Racing Edition", "The Meeting That Could've Been an Email", "Cooking Show With a 3-Year-Old Director", "Weather Forecast for Fictional Towns", "Tech Support for Time Travelers", "Real Estate Tours of Tiny Apartments", "Sports Commentary for Everyday Life", "The Plant Parent Confessional", "Instruction Manuals Read Dramatically", "Job Interviews for Supervillains", "Grocery Store Olympics — Aisle 9 Finals", "Historical Figures With Smartphones", "The Landlord Special — Renovation Reveal", "Unboxing Things From My Own House", "Stand-Up — Airports, Again"] },
-];
-
-const ALL_TAG_NAMES = Array.from(new Set([...BASE_TAGS.map((t) => t.name), ...GEN_SPECS.flatMap((s) => s.tags), ...BASE_VIDEOS.flatMap((v) => v.tags)]));
-
-function buildCatalog(): Video[] {
-  const rng = mulberry(20261126);
-  const out: Video[] = BASE_VIDEOS.map(withDefaults);
-  let n = 25;
-  let genIdx = 0;
-  for (const spec of GEN_SPECS) {
-    spec.titles.forEach((title, i) => {
-      const durationSec = 200 + Math.floor(rng() * 5000);
-      const days = Math.floor(rng() * 700);
-      const tags = [spec.tags[i % spec.tags.length] as string, spec.tags[(i + 2) % spec.tags.length] as string, ALL_TAG_NAMES[(n + i) % ALL_TAG_NAMES.length] as string];
-      const creator = genIdx < CREATORS.length * 2
-        ? (CREATORS[genIdx % CREATORS.length] as (typeof CREATORS)[number]).name
-        : rng() < 0.62
-          ? (BASE_CREATORS[Math.floor(rng() * BASE_CREATORS.length)] as (typeof BASE_CREATORS)[number]).name
-          : (CREATORS[Math.floor(rng() * CREATORS.length)] as (typeof CREATORS)[number]).name;
-      genIdx++;
-      out.push(withDefaults({
-        id: `v${n}`,
-        title,
-        durationSec,
-        duration: fmtDur(durationSec),
-        views: 300 + Math.floor(rng() * 3_400_000),
-        days,
-        age: ageFromDays(days),
-        rating: 78 + Math.floor(rng() * 22),
-        hd: rng() > 0.38,
-        category: spec.cat,
-        tags,
-        creator,
-        g: spec.grads[i % spec.grads.length] as [string, string],
-      }));
-      n++;
-    });
-  }
-  return out;
-}
-
-const VIDEOS: Video[] = buildCatalog();
-
-/* Every count shown in the UI is derived from this catalog, so a page never
-   claims more videos than it can actually list. */
-for (const c of CREATORS) c.videos = VIDEOS.filter((v) => v.creator === c.name).length;
-for (const ch of CHANNELS) ch.videos = String(VIDEOS.filter((v) => v.creator === ch.creator).length);
-for (const c of CATEGORIES) c.count = String(VIDEOS.filter((v) => v.category === c.name || v.tags.includes(c.name.toLowerCase())).length);
-
-const TAGS: { name: string; count: number }[] = (() => {
-  const rng = mulberry(777);
-  const extra = ALL_TAG_NAMES.filter((t) => !BASE_TAGS.some((b) => b.name === t)).map((name) => ({ name, count: 400 + Math.floor(rng() * 4200) }));
-  return [...BASE_TAGS, ...extra].sort((a, b) => b.count - a.count);
-})();
-
-for (const t of TAGS) t.count = VIDEOS.filter((v) => v.tags.includes(t.name) || v.category.toLowerCase() === t.name).length;
-
-/* ---------------- Admin panel state ----------------
-   Everything the admin panel manages lives in one AdminState object,
-   persisted as JSON through the saveAdminState action. The public site
-   renders buildEffective(adminState): the built-in catalog with admin
-   videos prepended, catalog edits applied as overrides, deletes removed,
-   and taxonomy renames/additions/deletions applied. A null AdminState
-   (nothing ever saved, or after Reset) reproduces the default site. */
-
-type AdminVideo = {
-  id: string;
-  title: string | null;
-  description: string | null;
-  embedUrl: string | null;
-  durationSec: number | null;
-  views: number | null;
-  days: number | null;
-  dateStr: string | null;
-  creator: string | null;
-  channel: string | null;
-  category: string | null;
-  tags: string[];
-  thumbnailUrl: string | null;
-  seoTitle: string | null;
-  seoDescription: string | null;
-  featured: boolean;
-  badgeNew: boolean;
-  rating: number | null;
-  hd: boolean;
-};
-
-type TaxOp = { added: string[]; renamed: Record<string, string>; deleted: string[] };
-const emptyTax = (): TaxOp => ({ added: [], renamed: {}, deleted: [] });
-
-type AdminState = {
-  texts: Record<string, string>;
-  buttons: { id: string; name: string; label: string; link: string }[];
-  seo: { siteTitle: string; metaDescription: string; metaKeywords: string; ogTitle: string; ogDescription: string };
-  addedVideos: AdminVideo[];
-  overrides: Record<string, AdminVideo>;
-  deletedIds: string[];
-  taxonomy: {
-    categories: TaxOp;
-    models: TaxOp;
-    tags: TaxOp;
-    channels: TaxOp;
-    channelsAdded: { name: string; creator: string }[];
-  };
-};
-
-const DEFAULT_TEXTS: Record<string, string> = {
-  siteName: "Pulse Video",
-  logoText: "PULSE VIDEO",
-  homeH1: "Stream Free Videos in HD",
-  secTrending: "Trending now",
-  secLatest: "Latest videos",
-  secModels: "Popular models",
-  secChannels: "Channels",
-  secBecause: "Because you watch",
-  secTopRated: "Top rated",
-  searchPlaceholder: "Search videos, models, tags",
-  footerText: "pulsevideo.example · For adults only. You must be 18 or older to use this site. All videos, models and counts shown are sample catalog entries.",
-  cookieText: "We use cookies to run this site and show ads.",
-};
-
-const DEFAULT_BUTTONS: AdminState["buttons"] = [
-  { id: "next", name: "Next (page / section)", label: "Next", link: "" },
-  { id: "showMore", name: "Show more (Latest on home)", label: "Show more", link: "" },
-  { id: "seeAll", name: "See all (section links)", label: "See all", link: "" },
-  { id: "follow", name: "Follow (model buttons)", label: "Follow", link: "" },
-  { id: "like", name: "Like (video page)", label: "Like", link: "" },
-  { id: "save", name: "Save / Watch later (video page)", label: "Save", link: "" },
-  { id: "watchFull", name: "Watch Full Video (player overlay)", label: "Watch Full Video", link: "" },
-];
-
-const DEFAULT_SEO: AdminState["seo"] = {
-  siteTitle: "Pulse Video | Stream Free Videos in HD",
-  metaDescription: "Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily.",
-  metaKeywords: "videos, streaming, hd videos, trending videos, models, channels",
-  ogTitle: "Pulse Video",
-  ogDescription: "Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily.",
-};
-
-const DEFAULT_ADMIN_STATE: AdminState = {
-  texts: { ...DEFAULT_TEXTS },
-  buttons: DEFAULT_BUTTONS.map((b) => ({ ...b })),
-  seo: { ...DEFAULT_SEO },
-  addedVideos: [],
-  overrides: {},
-  deletedIds: [],
-  taxonomy: { categories: emptyTax(), models: emptyTax(), tags: emptyTax(), channels: emptyTax(), channelsAdded: [] },
-};
-
-function parseAdminState(payload: string | null | undefined): AdminState {
-  const base = JSON.parse(JSON.stringify(DEFAULT_ADMIN_STATE)) as AdminState;
-  if (!payload) return base;
-  try {
-    const p = JSON.parse(payload) as Partial<AdminState>;
-    return {
-      texts: { ...base.texts, ...(p.texts ?? {}) },
-      buttons: DEFAULT_BUTTONS.map((d) => {
-        const b = (p.buttons ?? []).find((x) => x.id === d.id);
-        return b ? { ...d, label: typeof b.label === "string" ? b.label : d.label, link: typeof b.link === "string" ? b.link : d.link } : { ...d };
-      }),
-      seo: { ...base.seo, ...(p.seo ?? {}) },
-      addedVideos: Array.isArray(p.addedVideos) ? p.addedVideos : [],
-      overrides: p.overrides && typeof p.overrides === "object" ? p.overrides : {},
-      deletedIds: Array.isArray(p.deletedIds) ? p.deletedIds : [],
-      taxonomy: {
-        categories: { ...emptyTax(), ...(p.taxonomy?.categories ?? {}) },
-        models: { ...emptyTax(), ...(p.taxonomy?.models ?? {}) },
-        tags: { ...emptyTax(), ...(p.taxonomy?.tags ?? {}) },
-        channels: { ...emptyTax(), ...(p.taxonomy?.channels ?? {}) },
-        channelsAdded: Array.isArray(p.taxonomy?.channelsAdded) ? p.taxonomy.channelsAdded : [],
-      },
-    };
-  } catch {
-    return base;
-  }
-}
-
-function gradientFor(seed: string): [string, string] {
-  let h = 7;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
-  return CREATOR_GRADIENTS[Math.abs(h) % CREATOR_GRADIENTS.length] as [string, string];
-}
-
-function dateFromDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
-function parseDateValue(s: string): { days: number; dateStr: string } | null {
-  const d = new Date(s.trim());
-  if (isNaN(d.getTime())) return null;
-  const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 86_400_000));
-  return { days, dateStr: d.toISOString().slice(0, 10) };
-}
-
-function parseDuration(s: string): number | null {
-  const t = s.trim();
-  if (!t) return null;
-  if (/^\d+$/.test(t)) return parseInt(t, 10);
-  const parts = t.split(":").map((p) => parseInt(p, 10));
-  if (parts.length < 2 || parts.length > 3 || parts.some((p) => isNaN(p))) return null;
-  return parts.reduce((a, p) => a * 60 + p, 0);
-}
-
-function parseViews(s: string): number | null {
-  const m = s.trim().replace(/,/g, "").match(/^([\d.]+)\s*([kKmM])?$/);
-  if (!m) return null;
-  const n = parseFloat(m[1] as string);
-  if (isNaN(n)) return null;
-  const mult = m[2] ? (m[2].toLowerCase() === "m" ? 1_000_000 : 1000) : 1;
-  return Math.round(n * mult);
-}
-
-/* Extracts a playable source from whatever was pasted into an embed field:
-   a raw <iframe> embed code yields its src; YouTube watch/shorts/youtu.be
-   and Vimeo page URLs become their embed players; direct media files are
-   flagged so the player uses a <video> element. */
-function extractEmbedSrc(raw: string): string {
-  const s = raw.trim();
-  const m = s.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
-  return m && m[1] ? m[1].trim() : s;
-}
-
-function resolveEmbed(raw: string): { kind: "iframe" | "file"; src: string } {
-  let s = extractEmbedSrc(raw);
-  if (s.startsWith("//")) s = `https:${s}`;
-  /* A freepornvideo watch-page link (the URL in the browser bar on that
-     site) is not the embed player — convert it to the /embed/ player URL,
-     otherwise the iframe loads the whole watch page instead of a player. */
-  const fpv = s.match(/freepornvideo\.sex\/xxx\/(\d+)/i);
-  if (fpv && fpv[1]) return { kind: "iframe", src: `https://www.freepornvideo.sex/embed/${fpv[1]}` };
-  /* Same for XNXX: a watch-page link (/video-<id>/…) is not the embed
-     player — convert it to the /embedframe/ player URL. */
-  const xx = s.match(/xnxx\.com\/video-([\w-]+)/i);
-  if (xx && xx[1]) return { kind: "iframe", src: `https://www.xnxx.com/embedframe/${xx[1]}` };
-  const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{6,})/);
-  if (yt && yt[1]) return { kind: "iframe", src: `https://www.youtube.com/embed/${yt[1]}` };
-  const vm = s.match(/vimeo\.com\/(?:video\/)?(\d+)/);
-  if (vm && vm[1]) return { kind: "iframe", src: `https://player.vimeo.com/video/${vm[1]}` };
-  if (/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(s)) return { kind: "file", src: s };
-  return { kind: "iframe", src: s };
-}
-
-/* Imported video data arrives with HTML entities baked into its text
-   fields (descriptions like "wife&#039;s … babe &amp; her husband" —
-   measured on 98 of the owner's 198 imported videos). React escapes
-   text on render, so those entities would show literally on the video
-   page, in search and in the SEO description. Decode once, here, where
-   admin data becomes site data, and every surface (cards, video page,
-   admin lists, sitemap, JSON-LD) shows the real characters. &amp; is
-   decoded last so an escaped entity like &amp;#039; stays literal. */
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _m; } })
-    .replace(/&#(\d+);/g, (_m, n: string) => { try { return String.fromCodePoint(parseInt(n, 10)); } catch { return _m; } })
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-}
-const decText = (s: string | null): string | null => (s == null ? null : decodeEntities(s));
-
-/* Some sources hand back a video file as a video's "thumbnail" (the
-   owner's XNXX import uses XNXX's preview.mp4). An <img> can never
-   render it — the card would sit on the loading placeholder forever
-   and og:image would point at a movie — so surfaces that show a
-   thumbnail check the URL's type first and use a <video> preview (or
-   no image at all) for these. */
-const isVideoFileUrl = (u: string): boolean => /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u);
-
-function adminToVideo(av: AdminVideo): Video {
-  return {
-    id: av.id,
-    title: decText(av.title) ?? "Untitled video",
-    duration: av.durationSec != null ? fmtDur(av.durationSec) : "",
-    durationSec: av.durationSec ?? 0,
-    views: av.views ?? 0,
-    age: av.days != null ? ageFromDays(av.days) : "",
-    days: av.days ?? 9999,
-    rating: av.rating ?? 0,
-    hd: av.hd,
-    category: decText(av.category) ?? "Uncategorized",
-    tags: (av.tags ?? []).map((t) => decodeEntities(t)),
-    creator: decText(av.creator) ?? "",
-    g: gradientFor(av.id + (av.title ?? "")),
-    embedUrl: av.embedUrl,
-    description: decText(av.description),
-    thumbnailUrl: av.thumbnailUrl,
-    seoTitle: decText(av.seoTitle),
-    seoDescription: decText(av.seoDescription),
-    featured: av.featured,
-    badgeNew: av.badgeNew,
-    channel: decText(av.channel),
-    custom: true,
-    hasViews: av.views != null,
-    hasDate: av.days != null,
-    hasRating: av.rating != null,
-  };
-}
-
-function videoToAdmin(v: Video): AdminVideo {
-  return {
-    id: v.id,
-    title: v.title,
-    description: v.custom ? v.description : null,
-    embedUrl: v.embedUrl,
-    durationSec: v.duration ? v.durationSec : null,
-    views: v.hasViews ? v.views : null,
-    days: v.hasDate ? v.days : null,
-    dateStr: v.hasDate ? dateFromDays(v.days) : null,
-    creator: v.creator || null,
-    channel: v.channel,
-    category: v.category,
-    tags: [...v.tags],
-    thumbnailUrl: v.thumbnailUrl,
-    seoTitle: v.seoTitle,
-    seoDescription: v.seoDescription,
-    featured: v.featured,
-    badgeNew: v.badgeNew,
-    rating: v.hasRating ? v.rating : null,
-    hd: v.hd,
-  };
-}
-
-function emptyAdminVideo(id: string): AdminVideo {
-  return {
-    id, title: null, description: null, embedUrl: null, durationSec: null, views: null,
-    days: 0, dateStr: dateFromDays(0), creator: null, channel: null, category: null,
-    tags: [], thumbnailUrl: null, seoTitle: null, seoDescription: null,
-    featured: false, badgeNew: true, rating: null, hd: true,
-  };
-}
-
-/* Merges the saved admin state over the built-in catalog. Every count is
-   recomputed from the resulting video list, so admin pages and the public
-   site always agree. */
-function buildEffective(admin: AdminState | null) {
-  const tax = admin?.taxonomy;
-  const catRen = tax?.categories.renamed ?? {};
-  const modRen = tax?.models.renamed ?? {};
-  const tagRen = tax?.tags.renamed ?? {};
-  const chRen = tax?.channels.renamed ?? {};
-  const ren = (map: Record<string, string>, v: string) => map[v] ?? v;
-  const deletedIds = new Set(admin?.deletedIds ?? []);
-  const overrides = admin?.overrides ?? {};
-
-  type EffChannel = { name: string; videos: string; creator: string; g: [string, string] };
-  const channels: EffChannel[] = [];
-  for (const ch of CHANNELS) {
-    if ((tax?.channels.deleted ?? []).includes(ch.name)) continue;
-    channels.push({ name: ren(chRen, ch.name), videos: "0", creator: ren(modRen, ch.creator), g: ch.g });
-  }
-  for (const ca of tax?.channelsAdded ?? []) {
-    if (!channels.some((c) => c.name === ca.name)) channels.push({ name: ca.name, videos: "0", creator: ren(modRen, ca.creator), g: gradientFor(ca.name) });
-  }
-
-  const vids: Video[] = [];
-  for (const v of VIDEOS) {
-    if (deletedIds.has(v.id)) continue;
-    const ov = overrides[v.id];
-    if (ov) { vids.push(adminToVideo(ov)); continue; }
-    vids.push({ ...v, category: ren(catRen, v.category), creator: ren(modRen, v.creator), tags: v.tags.map((t) => ren(tagRen, t)) });
-  }
-  const added = (admin?.addedVideos ?? []).map(adminToVideo);
-  const videos = [...added, ...vids].sort((a, b) => Number(b.featured) - Number(a.featured));
-
-  for (const v of videos) {
-    if (v.channel) v.channel = ren(chRen, v.channel);
-    else v.channel = channels.find((c) => c.creator !== "" && c.creator === v.creator)?.name ?? null;
-    if (v.channel && !channels.some((c) => c.name === v.channel)) {
-      channels.push({ name: v.channel, videos: "0", creator: v.creator, g: gradientFor(v.channel) });
-    }
-  }
-  for (const ch of channels) ch.videos = String(videos.filter((v) => v.channel === ch.name || (ch.creator !== "" && v.creator === ch.creator)).length);
-
-  const catNames: string[] = [];
-  for (const c of CATEGORIES) {
-    if ((tax?.categories.deleted ?? []).includes(c.name)) continue;
-    const n = ren(catRen, c.name);
-    if (!catNames.includes(n)) catNames.push(n);
-  }
-  for (const n of tax?.categories.added ?? []) if (!catNames.includes(n)) catNames.push(n);
-  for (const v of videos) if (!catNames.includes(v.category)) catNames.push(v.category);
-  const categories = catNames.map((name) => ({ name, count: String(videos.filter((v) => v.category === name || v.tags.includes(name.toLowerCase())).length) }));
-
-  type EffCreator = { name: string; videos: number; followers: string; g: [string, string] };
-  const creators: EffCreator[] = [];
-  for (const c of CREATORS) {
-    if ((tax?.models.deleted ?? []).includes(c.name)) continue;
-    creators.push({ name: ren(modRen, c.name), videos: 0, followers: c.followers, g: c.g });
-  }
-  for (const n of tax?.models.added ?? []) if (!creators.some((c) => c.name === n)) creators.push({ name: n, videos: 0, followers: "0", g: gradientFor(n) });
-  for (const v of videos) if (v.creator && !creators.some((c) => c.name === v.creator)) creators.push({ name: v.creator, videos: 0, followers: "0", g: gradientFor(v.creator) });
-  for (const c of creators) c.videos = videos.filter((v) => v.creator === c.name).length;
-  /* Most videos first, so the Models page ("Models Having Most
-     Videos"), the home strip and the admin list all lead with the
-     models that actually have videos instead of burying them behind
-     empty entries. Stable sort: ties keep catalog order. */
-  creators.sort((a, b) => b.videos - a.videos);
-  /* Same for channels: busiest first on the Channels page and home. */
-  channels.sort((a, b) => Number(b.videos) - Number(a.videos));
-
-  const tagNames: string[] = [];
-  for (const t of TAGS) {
-    if ((tax?.tags.deleted ?? []).includes(t.name)) continue;
-    const n = ren(tagRen, t.name);
-    if (!tagNames.includes(n)) tagNames.push(n);
-  }
-  for (const n of tax?.tags.added ?? []) if (!tagNames.includes(n)) tagNames.push(n);
-  for (const v of videos) for (const t of v.tags) if (!tagNames.includes(t)) tagNames.push(t);
-  const tags = tagNames.map((name) => ({ name, count: videos.filter((v) => v.tags.includes(name) || v.category.toLowerCase() === name).length }));
-
-  return { videos, categories, creators, channels, tags };
-}
 
 /* ---------------- CSV (import / export) ---------------- */
 
@@ -737,6 +143,9 @@ const P: Record<string, string> = {
   check: "m4 12.5 5 5L20 6.5",
   trash: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13",
   pip: "M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Zm8 7h9v6h-9z",
+  rewind: "M11 17l-5-5 5-5M18 17l-5-5 5-5",
+  forward: "m13 17 5-5-5-5M6 17l5-5-5-5",
+  theater: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Zm2 4.5h14",
   funnel: "M4 5h16l-6 7v5l-4 2v-7Z",
   back: "M19 12H5m0 0 6-6m-6 6 6 6",
   sun: "M12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9ZM12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4",
@@ -1101,6 +510,106 @@ function PlayerSpinner({ label = "Loading video" }: { label?: string }) {
   );
 }
 
+/* Playback speeds offered by the speed menu in both players. */
+const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
+/* A speed menu that looks and feels like the existing quality gear
+   menu: same dark popover, same check mark on the active choice. */
+function SpeedMenu({ speed, open, onToggle, onSelect }: { speed: number; open: boolean; onToggle: () => void; onSelect: (s: number) => void }) {
+  return (
+    <span className="relative">
+      <button type="button" aria-label={`Playback speed ${speed}x`} aria-haspopup="menu" aria-expanded={open} onClick={onToggle} className="p-1.5 text-sm font-bold">{speed}x</button>
+      {open && (
+        <span role="menu" aria-label="Playback speed" className="absolute bottom-full right-0 z-20 mb-2 block w-44 overflow-hidden rounded-xl bg-[#17171c] py-1 text-left shadow-xl ring-1 ring-white/15">
+          <span className="block px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Playback speed</span>
+          {SPEED_OPTIONS.map((s) => (
+            <button key={s} type="button" role="menuitemradio" aria-checked={speed === s} onClick={() => onSelect(s)} className="flex w-full items-center gap-2 px-3 py-2 text-sm font-semibold transition hover:bg-white/10">
+              <span className="flex w-4 shrink-0 justify-center">{speed === s && <Icon n="check" size={15} />}</span>{s === 1 ? "Normal" : `${s}x`}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/* Controls auto-hide (YouTube-style): while playing and no menu is
+   open, the control bar fades out ~3s after the last mouse/touch
+   activity and comes back on the next movement or tap. Paused, or
+   with a menu open, the controls stay visible. `poke` is wired to the
+   player box's mousemove/touchstart and also resets the timer. */
+function useAutoHideControls(active: boolean, menuOpen: boolean) {
+  const [hidden, setHidden] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  const poke = useCallback(() => {
+    setHidden(false);
+    window.clearTimeout(timer.current);
+    if (active && !menuOpen) timer.current = window.setTimeout(() => setHidden(true), 3000);
+  }, [active, menuOpen]);
+  useEffect(() => {
+    if (!active || menuOpen) { window.clearTimeout(timer.current); setHidden(false); return; }
+    timer.current = window.setTimeout(() => setHidden(true), 3000);
+    return () => window.clearTimeout(timer.current);
+  }, [active, menuOpen]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return { hidden, poke };
+}
+
+/* Double-tap / double-click seek: one tap toggles play, but the toggle
+   is held ~300ms so a second tap on the same half can seek instead —
+   left half -10s, right half +10s — with a brief "-10s"/"+10s" flash.
+   A second tap on the other half is treated as a fresh first tap. */
+function useTapSeek(onSeek: (seconds: number) => void, onToggle: () => void) {
+  const [flash, setFlash] = useState<{ side: "left" | "right"; text: string; key: number } | null>(null);
+  const lastTap = useRef<{ t: number; side: "left" | "right" } | null>(null);
+  const pending = useRef<number | undefined>(undefined);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const seekRef = useRef(onSeek);
+  seekRef.current = onSeek;
+  const toggleRef = useRef(onToggle);
+  toggleRef.current = onToggle;
+  useEffect(() => () => { window.clearTimeout(pending.current); window.clearTimeout(flashTimer.current); }, []);
+  const handleTap = (clientX: number, rect: DOMRect) => {
+    const side = clientX - rect.left < rect.width / 2 ? "left" : "right";
+    const now = Date.now();
+    const last = lastTap.current;
+    if (last && now - last.t < 300 && last.side === side) {
+      window.clearTimeout(pending.current);
+      lastTap.current = null;
+      const sec = side === "left" ? -10 : 10;
+      seekRef.current(sec);
+      setFlash({ side, text: `${sec > 0 ? "+" : "-"}${Math.abs(sec)}s`, key: now });
+      window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlash(null), 700);
+      return;
+    }
+    lastTap.current = { t: now, side };
+    pending.current = window.setTimeout(() => { toggleRef.current(); }, 300);
+  };
+  return { handleTap, flash };
+}
+
+/* The "-10s" / "+10s" flash shown on a double-tap seek. */
+function SeekFlash({ flash }: { flash: { side: "left" | "right"; text: string; key: number } | null }) {
+  if (!flash) return null;
+  return (
+    <span key={flash.key} className={`pv-seek-flash pointer-events-none absolute top-1/2 z-30 flex -translate-y-1/2 items-center gap-1 rounded-full bg-black/70 px-3 py-1.5 text-sm font-bold text-white ${flash.side === "left" ? "left-4" : "right-4"}`} aria-hidden="true">
+      <Icon n={flash.side === "left" ? "rewind" : "forward"} size={16} />{flash.text}
+    </span>
+  );
+}
+
+/* Keyboard shortcuts must not fire while the viewer is typing, picking
+   from a select, or sitting on a control that uses the key itself
+   (Space/Enter on a button, arrows on a range slider). */
+function shortcutTargetBlocked(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  if (!t) return false;
+  const tag = t.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return true;
+  return false;
+}
+
 /* Real 16:9 player for admin-added videos that carry an embed source.
    Catalog videos (no embed) keep the SVG-art player.
    Playback note: freepornvideo.sex (a KVS player) only serves its video
@@ -1187,6 +696,22 @@ function EmbedPlayer({ v }: { v: Video }) {
      drives the same selected-stream state as the quality pills under
      the player, so both controls always agree. */
   const [qMenuOpen, setQMenuOpen] = useState(false);
+  /* Playback speed (same menu as the catalog player): applied to the
+     element's playbackRate, re-applied on metadata load in case the
+     element reloaded. */
+  const [speed, setSpeed] = useState(1);
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
+  /* Picture-in-Picture (native player only): tracked from the
+     element's enter/leavepictureinpicture events; the button is
+     hidden entirely where the browser has no PiP. */
+  const [pipActive, setPipActive] = useState(false);
+  const pipSupported = useMemo(() => { try { return !!document.pictureInPictureEnabled && typeof document.createElement("video").requestPictureInPicture === "function"; } catch { return false; } }, []);
+  /* Theater mode (desktop only): full-viewport-width 16:9 player. */
+  const [theater, setTheater] = useState(false);
+  /* Seek bar: buffered ranges (fractions of duration) and the hover
+     position/time for the tooltip. */
+  const [buffered, setBuffered] = useState<{ s: number; e: number }[]>([]);
+  const [seekHover, setSeekHover] = useState<{ pct: number; time: number } | null>(null);
   /* HLS streams (the extra resolutions some sources publish as
      playlists) play natively in Safari; everywhere else the hls.js
      attach effect below drives the same <video> element. The
@@ -1201,6 +726,8 @@ function EmbedPlayer({ v }: { v: Video }) {
     setPinned(null); setRetryNonce(0); setRetries(0); resumeRef.current = null;
     setPlaying(false); setCurTime(0); setDuration(0);
     setStarted(false); setWaiting(true); setQMenuOpen(false);
+    setSpeed(1); setSpeedMenuOpen(false); setPipActive(false); setTheater(false);
+    setBuffered([]); setSeekHover(null);
   }, [v.id]);
   useEffect(() => {
     const el = videoRef.current;
@@ -1213,6 +740,9 @@ function EmbedPlayer({ v }: { v: Video }) {
      control bar's button is the only fullscreen control. */
   const boxRef = useRef<HTMLDivElement | null>(null);
   const { big: isFs, expanded, rotated, toggle: toggleFullscreen } = usePlayerFullscreen(boxRef, videoRef);
+  /* Controls auto-hide: bar fades ~3s after the last activity while
+     playing, never while paused or while the quality/speed menu is open. */
+  const hide = useAutoHideControls(playing, qMenuOpen || speedMenuOpen);
   const fileQ = useQuery({
     queryKey: ["embedFile", v.id],
     queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }),
@@ -1297,7 +827,7 @@ function EmbedPlayer({ v }: { v: Video }) {
   const onLoadedMetadata = () => {
     const el = videoRef.current;
     if (!el) return;
-    el.volume = volume / 100; el.muted = muted;
+    el.volume = volume / 100; el.muted = muted; el.playbackRate = speed;
     if (Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration);
     setCurTime(el.currentTime || 0);
     const r = resumeRef.current;
@@ -1322,6 +852,41 @@ function EmbedPlayer({ v }: { v: Video }) {
     try { el.currentTime = t; } catch { /* position not seekable yet */ }
     setCurTime(t);
   };
+  /* Relative seek (double-tap, keyboard) and volume step, both
+     clamped to the media's own bounds. */
+  const seekBy = (sec: number) => {
+    const el = videoRef.current;
+    if (!el) return;
+    const base = Number.isFinite(el.currentTime) ? el.currentTime : curTime;
+    const d = el.duration;
+    const t = Math.min(Math.max(0, base + sec), Number.isFinite(d) && d > 0 ? d : base + sec);
+    try { el.currentTime = t; } catch { /* position not seekable yet */ }
+    setCurTime(t);
+  };
+  const changeVolume = (delta: number) => {
+    setVolume((vol) => Math.min(100, Math.max(0, vol + delta)));
+    setMuted(false);
+  };
+  const togglePip = async () => {
+    const el = videoRef.current;
+    if (!el) return;
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await el.requestPictureInPicture();
+    } catch { /* PiP denied or unavailable — the button just does nothing */ }
+  };
+  const updateBuffered = () => {
+    const el = videoRef.current;
+    if (!el || !(duration > 0)) return;
+    try {
+      const out: { s: number; e: number }[] = [];
+      for (let i = 0; i < el.buffered.length; i++) out.push({ s: el.buffered.start(i) / duration, e: el.buffered.end(i) / duration });
+      setBuffered(out);
+    } catch { /* buffered ranges unreadable here */ }
+  };
+  /* Double-tap left/right halves to seek ∓10s; a single tap still
+     toggles play (held ~300ms so the second tap can win). */
+  const tap = useTapSeek(seekBy, togglePlay);
   const progressPct = duration > 0 ? Math.min(100, Math.max(0, (curTime / duration) * 100)) : 0;
   /* The spinner means "playback was asked for and frames are not
      moving yet" — never "paused". It used to be `waiting && started`
@@ -1334,13 +899,82 @@ function EmbedPlayer({ v }: { v: Video }) {
      on the control bar's play button) calls play() on the element and
      playback continues from the same position. */
   const showSpinner = waiting && started && playing;
+  /* Keep the element's rate in step with the speed menu, including
+     after a stream switch remounts the element. */
+  useEffect(() => { const el = videoRef.current; if (el) el.playbackRate = speed; }, [speed, nativeSrc]);
+  const togglePlayRef = useRef<() => void>(() => {});
+  useEffect(() => { togglePlayRef.current = togglePlay; });
+  const fsRef = useRef<() => void>(() => {});
+  useEffect(() => { fsRef.current = toggleFullscreen; });
+  /* PiP button state follows the element's own events (the viewer can
+     also leave PiP from the floating window itself). */
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const onEnter = () => setPipActive(true);
+    const onLeave = () => setPipActive(false);
+    el.addEventListener("enterpictureinpicture", onEnter);
+    el.addEventListener("leavepictureinpicture", onLeave);
+    return () => { el.removeEventListener("enterpictureinpicture", onEnter); el.removeEventListener("leavepictureinpicture", onLeave); };
+  }, [nativeSrc]);
+  /* Esc leaves theater mode (fullscreen's own Esc is handled by
+     usePlayerFullscreen). */
+  useEffect(() => {
+    if (!theater) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !expanded) setTheater(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [theater, expanded]);
+  /* Keyboard shortcuts — native player only; the sandboxed iframe
+     fallback cannot be driven from here, so shortcuts stay inert
+     there (its own fullscreen button still works). Space/K play-pause,
+     arrows ∓5s, J/L ∓10s, arrows up/down volume, F fullscreen, M mute,
+     digits 0-9 jump to 0-90% of duration. */
+  useEffect(() => {
+    if (!nativeSrc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (shortcutTargetBlocked(e)) return;
+      const el = videoRef.current;
+      if (!el) return;
+      const k = e.key;
+      if (k === "Escape") {
+        if (qMenuOpen) { setQMenuOpen(false); return; }
+        if (speedMenuOpen) { setSpeedMenuOpen(false); return; }
+        return;
+      }
+      if (k === " " || k === "k" || k === "K") {
+        if (k === " " && (e.target as HTMLElement | null)?.tagName === "BUTTON") return;
+        e.preventDefault();
+        togglePlayRef.current();
+      } else if (k === "ArrowLeft") { e.preventDefault(); seekBy(-5); }
+      else if (k === "ArrowRight") { e.preventDefault(); seekBy(5); }
+      else if (k === "j" || k === "J") seekBy(-10);
+      else if (k === "l" || k === "L") seekBy(10);
+      else if (k === "ArrowUp") { e.preventDefault(); changeVolume(10); }
+      else if (k === "ArrowDown") { e.preventDefault(); changeVolume(-10); }
+      else if (k === "f" || k === "F") fsRef.current();
+      else if (k === "m" || k === "M") setMuted((m) => !m);
+      else if (/^[0-9]$/.test(k)) {
+        const d = el.duration;
+        if (Number.isFinite(d) && d > 0) {
+          try { el.currentTime = (Number(k) / 10) * d; } catch { /* position not seekable yet */ }
+          setCurTime(el.currentTime || 0);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeSrc, qMenuOpen, speedMenuOpen]);
   return (
     <>
-      <div ref={boxRef} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : { aspectRatio: "16/9" }}>
+      <div ref={boxRef} onMouseMove={hide.poke} onTouchStart={hide.poke} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : theater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : theater ? { aspectRatio: "16/9", width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9" }}>
         {nativeSrc ? (
           <>
-            <video key={nativeSrc} ref={videoRef} referrerPolicy="no-referrer" src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={togglePlay} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
+            <video key={nativeSrc} ref={videoRef} referrerPolicy="no-referrer" src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={(e) => tap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onProgress={updateBuffered} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); updateBuffered(); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
             {showSpinner && <PlayerSpinner />}
+            <SeekFlash flash={tap.flash} />
             {!playing && (
               <button type="button" aria-label={curTime > 0 ? "Resume video" : "Play video"} onClick={togglePlay} className="absolute left-1/2 top-1/2 z-30 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/95 text-black shadow-lg ring-1 ring-black/10 transition active:scale-90">
                 <Icon n="play" size={28} />
@@ -1350,13 +984,15 @@ function EmbedPlayer({ v }: { v: Video }) {
                 the bar's right end, next to the volume control — exactly
                 where the browser's (policy-greyed) button used to be —
                 and is the player's only fullscreen control. */}
-            <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 to-transparent px-3 pb-2 pt-8 text-white">
+            <div className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 to-transparent px-3 pb-2 pt-8 text-white transition-opacity duration-300 ${hide.hidden ? "pointer-events-none opacity-0" : "opacity-100"}`}>
               <div className="flex items-center gap-3 [&_button]:transition [&_button]:active:scale-90">
                 <button type="button" aria-label={playing ? "Pause" : "Play"} onClick={togglePlay} className="p-1"><Icon n={playing ? "pause" : "play"} size={20} /></button>
                 <span className="text-sm font-medium tabular-nums">{fmtDur(Math.floor(curTime))} / {fmtDur(Math.floor(duration))}</span>
                 <span className="ml-auto flex items-center gap-1">
                   <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={() => setMuted(!muted)} className="p-1.5"><Icon n={muted || volume === 0 ? "mute" : "volume"} size={20} /></button>
                   <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[#f43f5e] sm:block" />
+                  {/* Playback speed, same menu style as the quality gear. */}
+                  <SpeedMenu speed={speed} open={speedMenuOpen} onToggle={() => { setSpeedMenuOpen((o) => !o); setQMenuOpen(false); }} onSelect={(s) => { setSpeed(s); setSpeedMenuOpen(false); }} />
                   {/* Quality settings, on the video screen itself: the
                       gear opens a small menu over the player listing
                       every stream the source offers for this video;
@@ -1365,7 +1001,7 @@ function EmbedPlayer({ v }: { v: Video }) {
                       viewer's place (see the pinned-stream effect). */}
                   {multiStream && (
                     <span className="relative">
-                      <button type="button" aria-label="Quality settings" aria-haspopup="menu" aria-expanded={qMenuOpen} onClick={() => setQMenuOpen((o) => !o)} className="p-1.5"><Icon n="settings" size={20} /></button>
+                      <button type="button" aria-label="Quality settings" aria-haspopup="menu" aria-expanded={qMenuOpen} onClick={() => { setQMenuOpen((o) => !o); setSpeedMenuOpen(false); }} className="p-1.5"><Icon n="settings" size={20} /></button>
                       {qMenuOpen && (
                         <span role="menu" aria-label="Playback quality" className="absolute bottom-full right-0 z-20 mb-2 block w-48 overflow-hidden rounded-xl bg-[#17171c] py-1 text-left shadow-xl ring-1 ring-white/15">
                           <span className="block px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Quality</span>
@@ -1378,12 +1014,28 @@ function EmbedPlayer({ v }: { v: Video }) {
                       )}
                     </span>
                   )}
+                  {/* Picture-in-Picture (native player only, hidden
+                      where the browser has no PiP). */}
+                  {pipSupported && (
+                    <button type="button" aria-label={pipActive ? "Exit picture-in-picture" : "Picture-in-picture"} aria-pressed={pipActive} onClick={() => { void togglePip(); }} className="p-1.5"><Icon n="pip" size={20} /></button>
+                  )}
+                  {/* Theater mode, desktop only; Esc (or the button)
+                      returns to normal. Fullscreen from theater is fine. */}
+                  <button type="button" aria-label={theater ? "Exit theater mode" : "Theater mode"} aria-pressed={theater} onClick={() => setTheater((t) => !t)} className="hidden p-1.5 md:block"><Icon n="theater" size={20} /></button>
                   <button type="button" aria-label={isFs ? "Exit fullscreen" : "Fullscreen"} aria-pressed={isFs} onClick={toggleFullscreen} className="p-1.5"><Icon n={isFs ? "compress" : "expand"} size={20} /></button>
                 </span>
               </div>
-              <button type="button" aria-label="Seek" onClick={(e) => seekTo(e.clientX, e.currentTarget)} className="mt-1 block h-4 w-full">
-                <span className="relative block h-1 w-full rounded bg-white/30">
-                  <span className="block h-1 rounded bg-[var(--accent)]" style={{ width: `${progressPct}%` }} />
+              <button type="button" aria-label="Seek" onClick={(e) => seekTo(e.clientX, e.currentTarget)} onMouseMove={(e) => { if (!(duration > 0)) return; const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setSeekHover({ pct, time: (pct / 100) * duration }); }} onMouseLeave={() => setSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
+                {seekHover && (
+                  <span className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2 py-1 text-xs font-bold text-white shadow" style={{ left: `${Math.min(96, Math.max(4, seekHover.pct))}%` }}>{fmtDur(Math.floor(seekHover.time))}</span>
+                )}
+                <span className="relative block h-1 w-full rounded bg-white/30 transition-all group-hover/seek:h-2">
+                  <span className="absolute inset-0 overflow-hidden rounded" aria-hidden="true">
+                    {buffered.map((b, i) => (
+                      <span key={i} className="absolute top-0 h-full rounded bg-white/45" style={{ left: `${b.s * 100}%`, width: `${Math.max(0, (b.e - b.s) * 100)}%` }} />
+                    ))}
+                    <span className="block h-full rounded bg-[var(--accent)]" style={{ width: `${progressPct}%` }} />
+                  </span>
                   <span className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `${progressPct}%` }} aria-hidden="true" />
                 </span>
               </button>
@@ -2234,45 +1886,10 @@ type Tab = "home" | "categories" | "tags" | "creators" | "profile" | "channels";
 type Listing = { kind: "tag" | "category" | "creator" | "channel" | "feed" | "search"; name: string };
 type Filters = { len: string; quality: string; added: string; incl: string[]; excl: string[] };
 const NO_FILTERS: Filters = { len: "Any", quality: "Any", added: "Any time", incl: [], excl: [] };
-const slugify = (s: string) => s.toLowerCase().replace(/\s+/g, "-");
 const PAGE_SIZE = 12;
 
-/* ---------------- SEO: sitemap & robots generation ----------------
-   The sitemap is generated from the live effective catalog (built-in
-   videos plus everything the admin panel added, minus deletes), so a
-   newly added video, category, model, channel or tag appears in it
-   automatically.
-
-   Every published URL is a real path under the site root — never a
-   hash fragment. Crawlers strip everything from "#" onward, so the
-   old …#/video/… locations all collapsed to the home page and the
-   sitemap was useless to them. The app itself is hash-routed (this
-   runtime serves a single HTML entry), but on load it also resolves
-   these path URLs back to the matching view (see pathRoute below),
-   so each published URL opens the page it names wherever the host
-   serves the app for that path. For the same reason robots.txt must
-   never contain a "#": in robots.txt "#" starts a comment, so a line
-   like "Disallow: /#/history" is parsed as "Disallow: /" — a block
-   of the entire site. Hash routes are never sent to a server and
-   cannot be disallowed there anyway, so the file simply allows
-   everything and points at the sitemap. */
-
-/* The site root (directory form) for an origin+pathname base: strips
-   a trailing file segment such as index.html and ends with "/". */
-const siteRoot = (base: string) => base.replace(/[^/?#]+\.[a-z0-9]+$/i, "").replace(/\/?$/, "/");
-
-/* Canonical public URL of a route ("/video/<id>", "/categories/<slug>",
-   "/" for home): a fragment-free path URL under the site root. */
-const publicUrl = (base: string, route: string) => `${siteRoot(base)}${route.replace(/^\//, "")}`;
-
-/* The reverse of publicUrl, used once on load: when the app is opened
-   at one of the published path URLs (…/video/<id>, …/categories/<slug>),
-   return the hash route it names so the app opens that page. Only the
-   trailing path segments are read — the shell's own path prefix sits
-   in front of them — and only routes the sitemap/canonical publish
-   are recognized (never the admin, login or signup paths, which stay
-   hash-only). Returns null when the path names no route, which is
-   the normal case inside the shell. */
+/* The reverse of publicUrl, used once on load — kept here
+   because it reads window.location (client-only). */
 const pathRoute = (): string | null => {
   const segs = window.location.pathname.split("/").filter((s) => s.length > 0);
   const last = segs[segs.length - 1] ?? "";
@@ -2288,58 +1905,6 @@ const pathRoute = (): string | null => {
   return null;
 };
 
-const xmlEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-
-/* ISO date (YYYY-MM-DD) for a video whose age is tracked in days. */
-const isoDateFromDays = (days: number) => { const d = new Date(); d.setDate(d.getDate() - Math.max(0, Math.floor(days))); return d.toISOString().slice(0, 10); };
-
-/* ISO-8601 duration (PT#H#M#S) for structured data. */
-const isoDuration = (sec: number) => {
-  if (!sec || sec <= 0) return undefined;
-  const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = Math.floor(sec % 60);
-  return `PT${h ? `${h}H` : ""}${m ? `${m}M` : ""}${s || (!h && !m) ? `${s}S` : ""}`;
-};
-
-type SitemapData = { videos: Video[]; categories: { name: string }[]; creators: { name: string }[]; channels: { name: string }[]; tags: { name: string }[] };
-
-function buildSitemapXml(base: string, d: SitemapData): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const url = (route: string, lastmod: string, freq: string, prio: string) =>
-    `  <url>\n    <loc>${xmlEsc(publicUrl(base, route))}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${freq}</changefreq>\n    <priority>${prio}</priority>\n  </url>`;
-  const out: string[] = [
-    url("/", today, "daily", "1.0"),
-    url("/most-popular", today, "daily", "0.8"),
-    url("/latest-updates", today, "daily", "0.8"),
-    url("/top-rated", today, "weekly", "0.7"),
-    url("/longest", today, "weekly", "0.6"),
-    url("/categories", today, "weekly", "0.8"),
-    url("/models", today, "weekly", "0.8"),
-    url("/channels", today, "weekly", "0.7"),
-    url("/tags", today, "weekly", "0.7"),
-  ];
-  for (const v of d.videos) out.push(url(`/video/${v.id}`, v.hasDate ? isoDateFromDays(v.days) : today, "weekly", "0.9"));
-  for (const c of d.categories) out.push(url(`/categories/${slugify(c.name)}`, today, "weekly", "0.7"));
-  for (const c of d.creators) out.push(url(`/models/${slugify(c.name)}`, today, "weekly", "0.7"));
-  for (const c of d.channels) out.push(url(`/channels/${slugify(c.name)}`, today, "weekly", "0.6"));
-  for (const t of d.tags) out.push(url(`/tag/${slugify(t.name)}`, today, "weekly", "0.6"));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${out.join("\n")}\n</urlset>\n`;
-}
-
-function buildRobotsTxt(base: string): string {
-  /* No "#" anywhere in this file, not even in comments: "#" starts a
-     comment in robots.txt, so the previous "Disallow: /#/…" lines were
-     each read as "Disallow: /" and blocked the whole site. Private
-     views (admin, history, profile, search) are hash routes — they
-     are never sent to a server, so robots.txt cannot disallow them;
-     the app keeps them out of the index with noindex meta instead. */
-  return [
-    "User-agent: *",
-    "Allow: /",
-    "",
-    `Sitemap: ${publicUrl(base, "/sitemap.xml")}`,
-    "",
-  ].join("\n");
-}
 
 export function App() {
   const qc = useQueryClient();
@@ -2357,6 +1922,9 @@ export function App() {
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(80);
   const [speed, setSpeed] = useState(1);
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
+  const [artTheater, setArtTheater] = useState(false);
+  const [artSeekHover, setArtSeekHover] = useState<{ pct: number; time: number } | null>(null);
   const [notice, setNotice] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [autoplay, setAutoplay] = useState(true);
@@ -2386,6 +1954,12 @@ export function App() {
   const [bioOpen, setBioOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [notFound, setNotFound] = useState(false);
+  /* Route waiting on the admin catalog: a direct link to an imported
+     video (or category/model/channel/tag) cannot resolve until
+     getAdminState returns. While it is still loading the page shows a
+     spinner instead of a 404 — the old behaviour flashed "Page not
+     found" for ~15–20 s on cold starts before the re-resolve landed. */
+  const [routePending, setRoutePending] = useState(false);
   const [authView, setAuthView] = useState<"login" | "signup" | null>(null);
   const [historyView, setHistoryView] = useState(false);
   const [adminView, setAdminView] = useState(false);
@@ -2409,9 +1983,12 @@ export function App() {
   const [langOpen, setLangOpen] = useState(false);
   const playerRef = useRef<HTMLDivElement>(null);
   const artFs = usePlayerFullscreen(playerRef);
+  /* Catalog player controls auto-hide: same 3s rule as the native
+     player, never while paused or while the speed menu is open. */
+  const artHide = useAutoHideControls(playing, speedMenuOpen);
   /* Leaving a video (or opening another) always leaves expanded mode,
      so the next page never starts with the player covering it. */
-  useEffect(() => { artFs.collapse(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { artFs.collapse(); setArtTheater(false); setSpeedMenuOpen(false); setArtSeekHover(null); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id]);
   const scrollMem = useRef(new Map<string, number>());
   const wantRestore = useRef(false);
@@ -2534,7 +2111,7 @@ export function App() {
     requestAnimationFrame(() => scrollTopInstant());
     window.setTimeout(() => scrollTopInstant(), 60);
   };
-  const resetViews = () => { setNotFound(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
+  const resetViews = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
   const openVideo = (v: Video) => {
     resetViews();
     setCurrent(v);
@@ -2557,6 +2134,16 @@ export function App() {
     if (!playing) record.mutate(current.id);
     setPlaying(!playing);
   };
+  /* Relative seek for the catalog (fake) player: double-tap and
+     keyboard J/L and arrows. */
+  const seekArtBy = (sec: number) => {
+    if (!current) return;
+    setProgress((p) => Math.min(100, Math.max(0, p + (sec / current.durationSec) * 100)));
+  };
+  /* Double-tap left/right halves to seek ∓10s on the catalog player;
+     a single tap still toggles play (held ~300ms so the second tap
+     can win). The center button keeps its instant resume. */
+  const artTap = useTapSeek(seekArtBy, startPlayback);
   const switchLang = (code: string) => {
     setLang(code);
     setLangOpen(false);
@@ -2630,7 +2217,14 @@ export function App() {
     const [head = "", ...rest] = raw.split("/");
     const slug = decodeURIComponent(rest.join("/") || "");
     const fromSlug = (s: string) => titleCase(s.replace(/-/g, " "));
-    const clear = () => { setNotFound(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
+    const clear = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
+    /* A lookup that misses may only mean the admin catalog has not
+       loaded yet (imported videos/categories/models/tags live there,
+       not in the built-in catalog). While it is still loading, wait
+       for it instead of flashing a 404; once it has loaded (or the
+       load failed), a miss is a real 404. Route heads that can never
+       come from admin data (membership, unknown heads) 404 at once. */
+    const miss = () => { if (!adminReadyRef.current) setRoutePending(true); else setNotFound(true); };
     /* The #/panel route only restores a panel session this browser has
        already verified with the server (its token sits in
        sessionStorage). There is deliberately no #/admin route and no
@@ -2643,16 +2237,16 @@ export function App() {
     if (head === "membership") { clear(); setNotFound(true); setCurrent(null); setListing(null); return; }
     if (head === "history") { clear(); setHistoryView(true); setCurrent(null); setListing(null); return; }
     if (head === "categories" && !slug) { clear(); setTab("categories"); setListing(null); setCurrent(null); return; }
-    if (head === "categories" && slug) { clear(); const c = effRef.current.categories.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "category", name: c.name }); setCurrent(null); setTab("home"); } else setNotFound(true); return; }
+    if (head === "categories" && slug) { clear(); const c = effRef.current.categories.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "category", name: c.name }); setCurrent(null); setTab("home"); } else miss(); return; }
     if (head === "models" && !slug) { clear(); setTab("creators"); setListing(null); setCurrent(null); return; }
-    if (head === "models" && slug) { clear(); const c = effRef.current.creators.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "creator", name: c.name }); setCurrent(null); setTab("home"); } else setNotFound(true); return; }
+    if (head === "models" && slug) { clear(); const c = effRef.current.creators.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "creator", name: c.name }); setCurrent(null); setTab("home"); } else miss(); return; }
     if (head === "channels" && !slug) { clear(); setTab("channels"); setListing(null); setCurrent(null); return; }
-    if (head === "channels" && slug) { clear(); const c = effRef.current.channels.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "channel", name: c.name }); setCurrent(null); setTab("home"); } else setNotFound(true); return; }
+    if (head === "channels" && slug) { clear(); const c = effRef.current.channels.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "channel", name: c.name }); setCurrent(null); setTab("home"); } else miss(); return; }
     if (head === "tags" || head === "creators" || head === "profile") { clear(); setTab(head === "creators" ? "creators" : head); setListing(null); setCurrent(null); return; }
-    if (head === "video") { clear(); const v = effRef.current.videos.find((x) => x.id === slug); if (v) setCurrent(v); else setNotFound(true); return; }
+    if (head === "video") { clear(); const v = effRef.current.videos.find((x) => x.id === slug); if (v) setCurrent(v); else miss(); return; }
     if (head === "most-popular" || head === "top-rated" || head === "latest-updates" || head === "longest") { clear(); const f = head === "most-popular" ? "Trending" : head === "top-rated" ? "Top rated" : head === "latest-updates" ? "New" : "Longest"; setFeed(f); setListing({ kind: "feed", name: f }); setCurrent(null); setTab("home"); return; }
     if (head === "search") { clear(); if (slug) { const q = fromSlug(slug); setListing({ kind: "search", name: q }); setQuery(q); setCurrent(null); setTab("home"); } return; }
-    if (head === "tag") { clear(); if (slug) { const t = effRef.current.tags.find((x) => slugify(x.name) === slug); if (t) { setListing({ kind: "tag", name: t.name }); setCurrent(null); setTab("home"); } else setNotFound(true); } return; }
+    if (head === "tag") { clear(); if (slug) { const t = effRef.current.tags.find((x) => slugify(x.name) === slug); if (t) { setListing({ kind: "tag", name: t.name }); setCurrent(null); setTab("home"); } else miss(); } return; }
     /* Generated SEO files, rendered as pages so the owner can open,
        copy or download them: #/sitemap.xml and #/robots.txt. */
     if (head === "sitemap.xml" || head === "robots.txt") { clear(); setFileView(head === "sitemap.xml" ? "sitemap" : "robots"); setCurrent(null); setListing(null); setTab("home"); return; }
@@ -2717,15 +2311,22 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* A deep link to an admin-added video/category/model/tag can resolve as
-     404 on the very first pass, before getAdminState returns. Once the
-     admin data lands, re-resolve the current route if we landed on a 404. */
+  /* A deep link to an admin-added video/category/model/tag cannot
+     resolve on the very first pass, before getAdminState returns.
+     While the admin data is still loading, applyHash waits
+     (routePending) instead of 404ing; once the data lands — or the
+     load fails — the route is re-resolved, and a miss then is a
+     real 404. */
+  const adminReadyRef = useRef(false);
+  useEffect(() => { adminReadyRef.current = !!adminQ.data || adminQ.isError; }, [adminQ.data, adminQ.isError]);
   const notFoundRef = useRef(false);
   useEffect(() => { notFoundRef.current = notFound; }, [notFound]);
+  const routePendingRef = useRef(false);
+  useEffect(() => { routePendingRef.current = routePending; }, [routePending]);
   useEffect(() => {
-    if (adminQ.data && notFoundRef.current) applyHash();
+    if ((adminQ.data || adminQ.isError) && (notFoundRef.current || routePendingRef.current)) applyHash();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminQ.data]);
+  }, [adminQ.data, adminQ.isError]);
 
   useEffect(() => {
     if (!playing || !current) return;
@@ -2738,6 +2339,47 @@ export function App() {
     }, 250);
     return () => clearInterval(t);
   }, [playing, current, speed]);
+
+  /* Esc leaves theater mode on the catalog player (fullscreen's own
+     Esc is handled by usePlayerFullscreen). */
+  useEffect(() => {
+    if (!artTheater) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !artFs.expanded) setArtTheater(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [artTheater, artFs.expanded]);
+  /* Keyboard shortcuts for the catalog (art) player — same set as the
+     native player. The embed player registers its own; only one player
+     is ever mounted, so they never double-fire. */
+  useEffect(() => {
+    if (!current || current.embedUrl) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (shortcutTargetBlocked(e)) return;
+      const k = e.key;
+      if (k === "Escape") {
+        if (speedMenuOpen) { setSpeedMenuOpen(false); return; }
+        if (artTheater) { setArtTheater(false); return; }
+        return;
+      }
+      if (k === " " || k === "k" || k === "K") {
+        if (k === " " && (e.target as HTMLElement | null)?.tagName === "BUTTON") return;
+        e.preventDefault();
+        startPlayback();
+      } else if (k === "ArrowLeft") { e.preventDefault(); seekArtBy(-5); }
+      else if (k === "ArrowRight") { e.preventDefault(); seekArtBy(5); }
+      else if (k === "j" || k === "J") seekArtBy(-10);
+      else if (k === "l" || k === "L") seekArtBy(10);
+      else if (k === "ArrowUp") { e.preventDefault(); setVolume((vol) => Math.min(100, vol + 10)); setMuted(false); }
+      else if (k === "ArrowDown") { e.preventDefault(); setVolume((vol) => Math.max(0, vol - 10)); setMuted(false); }
+      else if (k === "f" || k === "F") artFs.toggle();
+      else if (k === "m" || k === "M") setMuted((m) => !m);
+      else if (/^[0-9]$/.test(k)) setProgress(Number(k) * 10);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, playing, progress, speedMenuOpen, artTheater, artFs]);
 
   /* Typing in the header search creates a real history entry (hash push) + loading bar + title change. */
   useEffect(() => {
@@ -2872,6 +2514,7 @@ export function App() {
     const brand = texts.siteName || "Pulse Video";
     document.title =
       adminView ? `Admin Panel | ${brand}` :
+      routePending ? `Loading… — ${brand}` :
       notFound ? `Page not found — ${brand}` :
       authView === "login" ? "Log in - pulsevideo" :
       authView === "signup" ? "Create your account - pulsevideo" :
@@ -2892,7 +2535,7 @@ export function App() {
       tab === "creators" ? `Models Having Most Videos | ${brand}` :
       tab === "channels" ? `Top Rated Channels | ${brand}` :
       `Your Library | ${brand}`;
-  }, [current, listing, tab, notFound, authView, historyView, adminView, fileView, texts.siteName, seo.siteTitle]);
+  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, texts.siteName, seo.siteTitle]);
 
   /* Dynamic SEO: every view gets its own meta description, Open Graph
      and Twitter cards, canonical URL, robots directive and JSON-LD
@@ -2925,7 +2568,7 @@ export function App() {
        as the sitemap: a "#" URL is stripped by crawlers and would
        point every page's canonical at the home page. */
     const pageUrl = publicUrl(base, route);
-    const noindex = adminView || !!authView || historyView || notFound || !!fileView || tab === "profile" || listing?.kind === "search";
+    const noindex = adminView || !!authView || historyView || notFound || routePending || !!fileView || tab === "profile" || listing?.kind === "search";
 
     let desc = seo.metaDescription;
     if (current) {
@@ -3032,7 +2675,7 @@ export function App() {
       script.remove();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, listing, tab, notFound, authView, historyView, adminView, fileView, seo, texts.siteName, eff]);
+  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, seo, texts.siteName, eff]);
 
   const navActive: Tab = current ? "home" : listing ? (listing.kind === "tag" ? "tags" : listing.kind === "search" ? "tags" : listing.kind === "creator" ? "creators" : listing.kind === "category" || listing.kind === "channel" ? "categories" : "home") : historyView || authView ? "profile" : tab === "channels" ? "categories" : tab;
 
@@ -3190,6 +2833,19 @@ export function App() {
 
       <main id="main" className="mx-auto max-w-6xl px-4 pb-32">
 
+        {/* ===== ROUTE LOADING (direct deep link, admin catalog still arriving) ===== */}
+        {routePending && !notFound && (
+          <section className="pt-16 text-center" aria-label="Loading page">
+            <span className="mx-auto flex items-center justify-center" role="status" aria-label="Loading">
+              <svg className="pv-spinner" width="44" height="44" viewBox="0 0 50 50" fill="none" aria-hidden="true">
+                <circle cx="25" cy="25" r="20" stroke="rgba(255,255,255,.25)" strokeWidth="5" />
+                <path d="M45 25a20 20 0 0 0-20-20" stroke="#f43f5e" strokeWidth="5" strokeLinecap="round" />
+              </svg>
+            </span>
+            <p className="mt-4 text-[var(--dim)]">Loading…</p>
+          </section>
+        )}
+
         {/* ===== 404 ===== */}
         {notFound && (
           <section className="pt-10 text-center" aria-label="Page not found">
@@ -3262,32 +2918,42 @@ export function App() {
             {current.embedUrl ? (
               <EmbedPlayer v={current} />
             ) : (
-            <div ref={playerRef} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
+            <div ref={playerRef} onMouseMove={artHide.poke} onTouchStart={artHide.poke} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : artTheater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : artTheater ? { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})`, width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
               <Motif v={current} big />
               <span className="absolute inset-0 bg-black/25" aria-hidden="true" />
+              <SeekFlash flash={artTap.flash} />
               {!playing && (
                 <>
+                  {/* Tap surface for the paused art player: a single tap
+                      resumes (via the double-tap handler), a double-tap
+                      on a half seeks ∓10s while staying paused. The
+                      center button above it keeps its instant resume. */}
+                  <button type="button" aria-label="Play video" onClick={(e) => artTap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} className="absolute inset-0" />
                   <button type="button" aria-label={progress > 0 ? "Resume video" : "Play video"} onClick={startPlayback} className="play-pulse absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--accent)] text-white">
                     <Icon n="play" size={34} />
                   </button>
-                  <span className="absolute left-1/2 top-[calc(50%+58px)] -translate-x-1/2 rounded-full bg-black/70 px-4 py-1.5 text-sm font-bold text-white">{btnLabel("watchFull", "Watch Full Video")}</span>
+                  <span className="pointer-events-none absolute left-1/2 top-[calc(50%+58px)] -translate-x-1/2 rounded-full bg-black/70 px-4 py-1.5 text-sm font-bold text-white">{btnLabel("watchFull", "Watch Full Video")}</span>
                 </>
               )}
-              {playing && <button type="button" aria-label="Pause video" onClick={startPlayback} className="absolute inset-0" />}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-2 pt-8">
+              {playing && <button type="button" aria-label="Pause video" onClick={(e) => artTap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} className="absolute inset-0" />}
+              <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-2 pt-8 transition-opacity duration-300 ${artHide.hidden ? "pointer-events-none opacity-0" : "opacity-100"}`}>
                 <div className="flex items-center gap-3 text-white [&_button]:transition [&_button]:active:scale-90">
                   <button type="button" aria-label={playing ? "Pause" : "Play"} onClick={startPlayback} className="p-1"><Icon n={playing ? "pause" : "play"} size={20} tone="accent" /></button>
                   <span className="text-sm font-medium tabular-nums">{fmtTime((progress / 100) * current.durationSec)} / {current.duration}</span>
                   <span className="ml-auto flex items-center gap-1">
                     <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={() => setMuted(!muted)} className="p-1.5"><Icon n={muted ? "mute" : "volume"} size={20} tone="accent" /></button>
                     <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[#f43f5e] sm:block" />
-                    <button type="button" aria-label={`Playback speed ${speed}x`} onClick={() => setSpeed(speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1)} className="p-1.5 text-sm font-bold">Speed: {speed}x</button>
+                    <SpeedMenu speed={speed} open={speedMenuOpen} onToggle={() => setSpeedMenuOpen((o) => !o)} onSelect={(s) => { setSpeed(s); setSpeedMenuOpen(false); }} />
                     <button type="button" aria-label="Mini player" onClick={() => flash("Mini player is not available in this demo player")} className="p-1.5"><Icon n="pip" size={20} tone="accent" /></button>
+                    <button type="button" aria-label={artTheater ? "Exit theater mode" : "Theater mode"} aria-pressed={artTheater} onClick={() => setArtTheater((t) => !t)} className="hidden p-1.5 md:block"><Icon n="theater" size={20} tone="accent" /></button>
                     <button type="button" aria-label={artFs.big ? "Exit fullscreen" : "Fullscreen"} aria-pressed={artFs.big} onClick={artFs.toggle} className="p-1.5"><Icon n={artFs.big ? "compress" : "expand"} size={20} tone="accent" /></button>
                   </span>
                 </div>
-                <button type="button" aria-label="Seek" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setProgress(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100))); }} className="mt-1 block h-4 w-full">
-                  <span className="block h-1 w-full rounded bg-white/30"><span className="block h-1 rounded bg-[var(--accent)]" style={{ width: `${progress}%` }} /></span>
+                <button type="button" aria-label="Seek" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setProgress(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100))); }} onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setArtSeekHover({ pct, time: (pct / 100) * current.durationSec }); }} onMouseLeave={() => setArtSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
+                  {artSeekHover && (
+                    <span className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2 py-1 text-xs font-bold text-white shadow" style={{ left: `${Math.min(96, Math.max(4, artSeekHover.pct))}%` }}>{fmtTime(artSeekHover.time)}</span>
+                  )}
+                  <span className="block h-1 w-full rounded bg-white/30 transition-all group-hover/seek:h-2"><span className="block h-full rounded bg-[var(--accent)]" style={{ width: `${progress}%` }} /></span>
                 </button>
               </div>
             </div>
