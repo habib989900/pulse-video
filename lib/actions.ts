@@ -110,21 +110,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   resolveEmbedFile: {
     request: z.object({ embedUrl: z.string().min(1).max(2000) }),
     handler: async (args: { embedUrl: string }): Promise<EmbedFileResult> => {
-      /* TEMPORARY diagnostics (2026-11-27): the player falls back to the
-         iframe in the browser even though direct resolve calls return
-         streams — log whether the browser's call arrives and what it
-         returns, so the Vercel function log shows the truth. Remove
-         once the fallback cause is found. */
-      const started = Date.now();
-      const host = (() => { try { return new URL(args.embedUrl).hostname; } catch { return "?"; } })();
-      try {
-        const out = await resolveEmbedFile(args.embedUrl);
-        console.log(`[diag] resolveEmbedFile host=${host} streams=${out.streams.length} fileUrl=${!!out.fileUrl} ms=${Date.now() - started}`);
-        return out;
-      } catch (err) {
-        console.log(`[diag] resolveEmbedFile host=${host} THREW ms=${Date.now() - started} err=${err instanceof Error ? err.message : String(err)}`);
-        throw err;
-      }
+      return resolveEmbedFile(args.embedUrl);
     },
   },
 };
