@@ -81,6 +81,7 @@ async function writeJson(blobPath: string, localFile: string, value: unknown): P
   await put(blobPath, JSON.stringify(value), {
     access: "private",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/json",
     token,
   });
@@ -160,6 +161,7 @@ export async function resetAdminPayload(): Promise<void> {
   await put(ADMIN_STATE_PATH, JSON.stringify(null), {
     access: "private",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/json",
     token,
   });
