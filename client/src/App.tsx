@@ -1165,6 +1165,10 @@ function EmbedPlayer({ v }: { v: Video }) {
   const [pinned, setPinned] = useState<{ url: string; label: string; hls: boolean; nonce: number } | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [retries, setRetries] = useState(0);
+  /* TEMPORARY diagnostics (2026-11-27): the <video> element's own
+     error code (1=aborted, 2=network, 3=decode, 4=src not supported),
+     shown in the [dbg] line under the player. Remove with the line. */
+  const [videoErr, setVideoErr] = useState<number | null>(null);
   /* Custom control-bar state for the native player. The video element
      no longer uses the browser's built-in controls: their fullscreen
      button (bottom-right of the bar, next to the volume icon — the one
@@ -1198,7 +1202,7 @@ function EmbedPlayer({ v }: { v: Video }) {
   const resumeRef = useRef<{ t: number; playing: boolean } | null>(null);
   useEffect(() => {
     setLoaded(false); setFileFailed(false); setSelLabel(null);
-    setPinned(null); setRetryNonce(0); setRetries(0); resumeRef.current = null;
+    setPinned(null); setRetryNonce(0); setRetries(0); setVideoErr(null); resumeRef.current = null;
     setPlaying(false); setCurTime(0); setDuration(0);
     setStarted(false); setWaiting(true); setQMenuOpen(false);
   }, [v.id]);
@@ -1258,6 +1262,8 @@ function EmbedPlayer({ v }: { v: Video }) {
      the attach effect below owns the element instead. */
   const useHlsJs = !!pinned?.hls && !nativeHls;
   const onVideoError = () => {
+    const code = videoRef.current?.error?.code ?? null;
+    if (code !== null) setVideoErr(code);
     if (emb.kind === "file" || !isGatedIframe) return;
     if (retries >= 1) { setFileFailed(true); return; }
     /* The signed storage URL most likely expired — re-resolve once and
@@ -1415,6 +1421,16 @@ function EmbedPlayer({ v }: { v: Video }) {
           </>
         )}
       </div>
+      {/* TEMPORARY diagnostics (2026-11-27): shows the player's live
+          state so the fallback cause can be read off the page — the
+          resolve query's status, the pinned stream, whether the native
+          <video> errored and with which MediaError code. Remove once
+          the fallback cause is found. */}
+      {isGatedIframe && (
+        <div className="mt-2 font-mono text-[11px] text-[var(--dim)]" data-dbg-player>
+          [dbg] q={fileQ.status}/{fileQ.fetchStatus} qerr={fileQ.error instanceof Error ? fileQ.error.message : "-"} streams={fileQ.data?.streams?.length ?? "-"} pinned={pinned ? `${pinned.label}:${pinned.hls ? "hls" : "mp4"}` : "-"} failed={fileFailed ? "1" : "0"} retries={retries} verr={videoErr ?? "-"}
+        </div>
+      )}
       {nativeSrc && multiStream && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-[var(--dim)]" role="group" aria-label="Playback quality">
           <span>Quality:</span>
