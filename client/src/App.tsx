@@ -926,7 +926,7 @@ function Thumb({ v, rank, wide, badge }: { v: Video; rank?: number; wide?: boole
         /* The "thumbnail" is itself a video file (e.g. an XNXX
            preview.mp4): play it as a muted looping preview — an <img>
            would error and leave the placeholder up forever. */
-        <video src={v.thumbnailUrl} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
+        <video src={v.thumbnailUrl} muted loop autoPlay playsInline preload="metadata" ref={(el) => { if (el) el.setAttribute("referrerpolicy", "no-referrer"); }} onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
       ) : (
         <img src={v.thumbnailUrl} alt="" loading="lazy" onLoad={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
@@ -1339,7 +1339,7 @@ function EmbedPlayer({ v }: { v: Video }) {
       <div ref={boxRef} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : { aspectRatio: "16/9" }}>
         {nativeSrc ? (
           <>
-            <video key={nativeSrc} ref={videoRef} src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={togglePlay} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
+            <video key={nativeSrc} ref={(el) => { videoRef.current = el; if (el) el.setAttribute("referrerpolicy", "no-referrer"); }} src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={togglePlay} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
             {showSpinner && <PlayerSpinner />}
             {!playing && (
               <button type="button" aria-label={curTime > 0 ? "Resume video" : "Play video"} onClick={togglePlay} className="absolute left-1/2 top-1/2 z-30 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/95 text-black shadow-lg ring-1 ring-black/10 transition active:scale-90">
@@ -1391,7 +1391,7 @@ function EmbedPlayer({ v }: { v: Video }) {
           </>
         ) : resolving ? (
           <>
-            {posterUrl && <img src={posterUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50" />}
+            {posterUrl && <img src={posterUrl} alt="" referrerPolicy="no-referrer" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50" />}
             <PlayerSpinner />
           </>
         ) : (
@@ -1401,7 +1401,7 @@ function EmbedPlayer({ v }: { v: Video }) {
                 buttons inside the iframe (it covers the whole frame
                 until the iframe reports loaded, and a missed load
                 event would otherwise leave every tap dead). */}
-            {!loaded && posterUrl && <img src={posterUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50" />}
+            {!loaded && posterUrl && <img src={posterUrl} alt="" referrerPolicy="no-referrer" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50" />}
             {!loaded && <PlayerSpinner />}
             <iframe src={emb.src} title={v.title} onLoad={() => setLoaded(true)} className="absolute inset-0 h-full w-full" allow="accelerometer; autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" {...(isGatedIframe ? { sandbox: "allow-scripts allow-same-origin allow-presentation" } : {})} />
             {/* Same treatment as the native player: no floating button —
