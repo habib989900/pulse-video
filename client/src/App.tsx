@@ -1428,7 +1428,7 @@ function EmbedPlayer({ v }: { v: Video }) {
           the fallback cause is found. */}
       {isGatedIframe && (
         <div className="mt-2 font-mono text-[11px] text-[var(--dim)]" data-dbg-player>
-          [dbg] q={fileQ.status}/{fileQ.fetchStatus} qerr={fileQ.error instanceof Error ? fileQ.error.message : "-"} streams={fileQ.data?.streams?.length ?? "-"} pinned={pinned ? `${pinned.label}:${pinned.hls ? "hls" : "mp4"}` : "-"} failed={fileFailed ? "1" : "0"} retries={retries} verr={videoErr ?? "-"}
+          [dbg] q={fileQ.status}/{fileQ.fetchStatus} qerr={fileQ.error instanceof Error ? fileQ.error.message : "-"} streams={fileQ.data?.streams?.length ?? "-"} pinned={pinned ? `${pinned.label}:${pinned.hls ? "hls" : "mp4"}` : "-"} failed={fileFailed ? "1" : "0"} retries={retries} verr={videoErr ?? "-"} rp={videoRef.current?.getAttribute("referrerpolicy") ?? "?"} ns={videoRef.current?.networkState ?? "?"}
         </div>
       )}
       {nativeSrc && multiStream && (

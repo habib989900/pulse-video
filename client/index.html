@@ -3,6 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <!-- Send no Referer anywhere on the page: the video storage host
+         (stor32/stor33.freepornvideo.sex) answers 403 when the browser
+         sends this site's address as Referer, and 206 with no Referer.
+         This is the page-wide backstop for the referrerPolicy on the
+         <video> element itself — if the element's attribute is ever
+         dropped, the video fetch still carries no Referer. Thumbnails
+         and the site's own API calls work fine with no Referer. -->
+    <meta name="referrer" content="no-referrer" />
     <meta name="color-scheme" content="light dark" />
     <!-- Apply the saved light/dark choice before first paint, so a
          light-mode visitor never flashes the dark default. -->
