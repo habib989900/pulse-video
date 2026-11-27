@@ -573,12 +573,16 @@ function shortcutTargetBlocked(e: KeyboardEvent): boolean {
 function EmbedPlayer({ v }: { v: Video }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
   /* Embeds the resolveEmbedFile action can turn into direct files:
-     freepornvideo (/embed/<id>) and XNXX (/embedframe/<id>). XNXX's own
+     freepornvideo (/embed/<id>), freepornvideos.xxx (/embed/<id>),
+     XNXX (/embedframe/<id>) and YouPorn (/embed/<id>). XNXX's own
      player refuses playback inside third-party frames ("Blocked
      content. Contact the site owner to fix"), so its videos must go
      through the same server-side resolution as the gated KVS embeds —
-     the iframe below is only the fallback when resolution fails. */
-  const isGatedIframe = !!emb && emb.kind === "iframe" && (() => { try { const u = new URL(emb.src); return /(^|\.)freepornvideo\.sex$/i.test(u.hostname) || (/(^|\.)xnxx\.com$/i.test(u.hostname) && u.pathname.startsWith("/embedframe/")); } catch { return false; } })();
+     the iframe below is only the fallback when resolution fails.
+     freepornvideos.xxx offers 480p/720p/4k direct files; YouPorn
+     resolves to HLS 480p/240p only — its direct MP4s demand a
+     youporn.com Referer, which this site never sends. */
+  const isGatedIframe = !!emb && emb.kind === "iframe" && (() => { try { const u = new URL(emb.src); return /(^|\.)freepornvideo\.sex$/i.test(u.hostname) || (/(^|\.)xnxx\.com$/i.test(u.hostname) && u.pathname.startsWith("/embedframe/")) || (/(^|\.)freepornvideos\.xxx$/i.test(u.hostname) && u.pathname.startsWith("/embed/")) || (/(^|\.)youporn\.com$/i.test(u.hostname) && u.pathname.startsWith("/embed/")); } catch { return false; } })();
   const queryClient = useQueryClient();
   const [loaded, setLoaded] = useState(false);
   const [fileFailed, setFileFailed] = useState(false);

@@ -369,6 +369,14 @@ export function resolveEmbed(raw: string): { kind: "iframe" | "file"; src: strin
      otherwise the iframe loads the whole watch page instead of a player. */
   const fpv = s.match(/freepornvideo\.sex\/xxx\/(\d+)/i);
   if (fpv && fpv[1]) return { kind: "iframe", src: `https://www.freepornvideo.sex/embed/${fpv[1]}` };
+  /* Same for freepornvideos.xxx: a video-page link (/videos/<id>/…)
+     is not the embed player — convert it to the /embed/ player URL. */
+  const fx = s.match(/freepornvideos\.xxx\/videos\/(\d+)/i);
+  if (fx && fx[1]) return { kind: "iframe", src: `https://www.freepornvideos.xxx/embed/${fx[1]}` };
+  /* Same for YouPorn: a watch-page link (/watch/<id>/…) is not the
+     embed player — convert it to the /embed/ player URL. */
+  const yp = s.match(/youporn\.com\/watch\/(\d+)/i);
+  if (yp && yp[1]) return { kind: "iframe", src: `https://www.youporn.com/embed/${yp[1]}/` };
   /* Same for XNXX: a watch-page link (/video-<id>/…) is not the embed
      player — convert it to the /embedframe/ player URL. */
   const xx = s.match(/xnxx\.com\/video-([\w-]+)/i);
