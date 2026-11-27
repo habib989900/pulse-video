@@ -2991,7 +2991,16 @@ export function App() {
           </section>
         )}
 
-        {/* ===== Footer (also on the video page) ===== */}
+        {/* ===== Footer (also on the video page) =====
+            Gated on the catalog data being ready. PageSpeed 2026-11-27:
+            the footer caused the entire remaining 0.176 CLS — it paints
+            in the viewport while the home sections are still loading,
+            then gets pushed down as they render above it. Mounting it
+            only once the content above it is settled (slim state, plus
+            the full state when the video page / admin panel enabled that
+            query) means it never moves. On a failed fetch it still shows
+            (isError), so the footer is never missing forever. */}
+        {((adminQ.data || adminQ.isError) && (adminFullQ.fetchStatus === "idle" || adminFullQ.data || adminFullQ.isError)) && (
         <footer className="mt-12 border-t border-[var(--border)] pt-5 text-[13px] text-[var(--dim)]">
           <nav className="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer">
             <button type="button" onClick={() => goTab("categories")} className="py-1">Categories</button>
@@ -3005,6 +3014,7 @@ export function App() {
           </nav>
           <p className="mt-4 leading-relaxed">{texts.footerText}</p>
         </footer>
+        )}
       </main>
 
       {/* ===== Menu drawer (mobile + desktop) ===== */}
