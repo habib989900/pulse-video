@@ -46,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!def) {
     return res.status(400).json({ error: `Unknown action: ${name || "(missing)"}` });
   }
-  if (name === "verifyAdminCode" && rateLimited(`code:${clientIp(req)}`, 5, 60_000)) {
+  if (name === "verifyAdminCode" && rateLimited(`code:${clientIp(req)}`, 10, 60_000)) {
     return res.status(429).json({ error: "Too many code attempts — try again in a minute." });
   }
   if (name === "resolveEmbedFile" && rateLimited(`resolve:${clientIp(req)}`, 20, 60_000)) {

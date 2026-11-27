@@ -1147,6 +1147,8 @@ export function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
+  const queryRef = useRef(query);
+  queryRef.current = query;
   const [, setFeed] = useState<(typeof FEED_TABS)[number]>("For you");
   const [chip, setChip] = useState("All");
   const [letter, setLetter] = useState("Popular");
@@ -1774,7 +1776,6 @@ export function App() {
   useEffect(() => {
     window.clearTimeout(searchTimer.current);
     const q = query.trim();
-    if (listing?.kind === "search" && listing.name.toLowerCase() === q.toLowerCase()) return;
     if (!q) return;
     /* The admin code typed into search opens the panel instead of a
        search — the owner's way in when the shell's address bar cannot
@@ -1783,15 +1784,21 @@ export function App() {
        verifyAdminCode, and only a server-confirmed match opens the
        panel; the text is cleared at once so it never lingers in the
        box or becomes a search history entry. A non-match falls through
-       to the normal search. */
-    let cancelled = false;
+       to the normal search. Only a plausible code is ever checked
+       (one token, 6+ chars), so half-typed text never burns the
+       server's per-minute code-attempt budget; retyping the same text
+       while already on its search page still re-checks it; and a
+       confirmed match opens the panel whenever the box still holds
+       that same text, even if more typing happened meanwhile. */
+    const plausible = q.length >= 6 && !/\s/.test(q);
+    const alreadyThere = listing?.kind === "search" && listing.name.toLowerCase() === q.toLowerCase();
     searchTimer.current = window.setTimeout(() => {
       /* The search navigates at once; the admin-code check runs in
          parallel and only a confirmed match diverts to the panel. */
-      openListing({ kind: "search", name: q });
-      void tryAdminCode(q).then((ok) => { if (ok && !cancelled) { setQuery(""); setSearchDraft(""); goAdmin(); } });
+      if (!alreadyThere) openListing({ kind: "search", name: q });
+      if (plausible) void tryAdminCode(q).then((ok) => { if (ok && queryRef.current.trim() === q) { setQuery(""); setSearchDraft(""); goAdmin(); } });
     }, 650);
-    return () => { cancelled = true; window.clearTimeout(searchTimer.current); };
+    return () => { window.clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
@@ -2618,7 +2625,7 @@ export function App() {
                 <>
                   <div className="mt-4 flex gap-2">
                     <label className="relative flex-1">
-                      <input aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); openListing({ kind: "search", name: text }); void tryAdminCode(text).then((ok) => { if (ok) { setSearchDraft(""); setQuery(""); goAdmin(); } }); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+                      <input aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); openListing({ kind: "search", name: text }); if (text.length >= 6 && !/\s/.test(text)) void tryAdminCode(text).then((ok) => { if (ok) { setSearchDraft(""); setQuery(""); goAdmin(); } }); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
                       {searchDraft
                         ? <button type="button" aria-label="Clear search" onClick={() => { setSearchDraft(""); setQuery(""); goTab("tags"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
                         : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
