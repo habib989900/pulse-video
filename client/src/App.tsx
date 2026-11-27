@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { cardThumbUrl, fullThumbUrl } from "./thumb";
 import {
   buildEffective, buildRobotsTxt, buildSitemapXml, fmtDur, fmtViews, isVideoFileUrl,
   isoDateFromDays, isoDuration, parseAdminState, publicUrl, resolveEmbed, slugify,
@@ -249,9 +250,9 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
         /* The "thumbnail" is itself a video file (e.g. an XNXX
            preview.mp4): play it as a muted looping preview — an <img>
            would error and leave the placeholder up forever. */
-        <video referrerPolicy="no-referrer" src={v.thumbnailUrl} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
+        <video referrerPolicy="no-referrer" src={v.thumbnailUrl} width={640} height={360} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
       ) : (
-        <img src={v.thumbnailUrl} alt="" loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
+        <img src={cardThumbUrl(v.thumbnailUrl) ?? v.thumbnailUrl} alt="" width={392} height={294} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={(e) => { const full = fullThumbUrl((e.currentTarget as HTMLImageElement).src); if (full && (e.currentTarget as HTMLImageElement).src !== full) { (e.currentTarget as HTMLImageElement).src = full; return; } setImgState("err"); }} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
       {badge && <span className="absolute left-2 top-2 rounded-md bg-[var(--accent)] px-2 py-0.5 text-[11px] font-black tracking-wide text-white shadow">{badge}</span>}
@@ -1263,8 +1264,13 @@ export function App() {
      catalog. These local names shadow the module-level catalog constants
      everywhere inside the component, so every list, count and page renders
      the effective (admin-aware) data. */
-  const adminQ = useQuery({ queryKey: ["admin"], queryFn: () => api.getAdminState({}), staleTime: 10 * 60_000, refetchOnWindowFocus: false });
-  const adminState = useMemo(() => parseAdminState(adminQ.data?.payload), [adminQ.data]);
+  const adminQ = useQuery({ queryKey: ["admin"], queryFn: () => api.getAdminStateSlim(), staleTime: 10 * 60_000, refetchOnWindowFocus: false });
+  /* The admin panel (and the video-page description) need the FULL payload:
+     slim drops descriptions, so saving from slim state would persist them
+     as null. The full query loads lazily, only when the panel is open or
+     a video page is showing. */
+  const adminFullQ = useQuery({ queryKey: ["admin-full"], queryFn: () => api.getAdminState({}), enabled: adminView || current !== null, staleTime: 10 * 60_000, refetchOnWindowFocus: false });
+  const adminState = useMemo(() => parseAdminState(adminFullQ.data?.payload ?? adminQ.data?.payload), [adminQ.data, adminFullQ.data]);
   const eff = useMemo(() => buildEffective(adminState), [adminState]);
   const VIDEOS = eff.videos;
   const CATEGORIES = eff.categories;
@@ -1306,7 +1312,7 @@ export function App() {
     window.location.hash = "#/";
   };
   const reloadPanel = () => {
-    void adminQ.refetch().then((r) => {
+    void adminFullQ.refetch().then((r) => {
       panelPayloadRef.current = r.data?.payload ?? null;
       setStaleBanner(false);
       setAdminMountKey((k) => k + 1);
@@ -1314,18 +1320,18 @@ export function App() {
   };
   const keepPanelEdits = () => {
     setStaleBanner(false);
-    panelPayloadRef.current = adminQ.data?.payload ?? null;
+    panelPayloadRef.current = adminFullQ.data?.payload ?? null;
   };
   useEffect(() => {
     if (!adminView) { panelPayloadRef.current = undefined; setStaleBanner(false); return; }
-    const p = adminQ.data?.payload ?? null;
+    const p = adminFullQ.data?.payload ?? null;
     if (panelPayloadRef.current === undefined) { panelPayloadRef.current = p; return; }
     if (p === panelPayloadRef.current) return;
     if (panelDirtyRef.current) { setStaleBanner(true); return; }
     /* No unsaved edits — the panel can adopt the new data. */
     panelPayloadRef.current = p;
     setAdminMountKey((k) => k + 1);
-  }, [adminQ.data, adminView]);
+  }, [adminFullQ.data, adminView]);
   /* Two open admin tabs can silently overwrite each other (last save
      wins): when this panel opens it pings, and any other open panel
      answers — an answer within ~500ms raises the warning. */
@@ -2125,13 +2131,13 @@ export function App() {
           owner's real saved state (their whole imported catalog) with
           those defaults. Until the query settles, a plain loading /
           error screen stands in. */}
-      {adminView && !adminQ.isSuccess ? (
+      {adminView && !adminFullQ.isSuccess ? (
         <div className="mx-auto max-w-xl px-4 pb-24 pt-16 text-center">
           <h1 className="font-display text-xl font-black text-white">Admin Panel</h1>
-          {adminQ.isError ? (
+          {adminFullQ.isError ? (
             <>
               <p className="mt-2 text-sm text-[var(--dim)]">The saved site data could not be loaded, so the panel stays closed — opening it now could overwrite your videos and settings.</p>
-              <button type="button" onClick={() => { void adminQ.refetch(); }} className="mt-5 rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Try again</button>
+              <button type="button" onClick={() => { void adminFullQ.refetch(); }} className="mt-5 rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Try again</button>
             </>
           ) : (
             <p className="mt-2 text-sm text-[var(--dim)]">Loading your site data…</p>
@@ -2192,7 +2198,12 @@ export function App() {
       ) : (
       <>
       {/* ===== Header ===== */}
-      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-black/95 pt-safe backdrop-blur">
+      {/* CLS: reserve the header's height up front so the page below
+          does not jump while the webfont swaps in. Measured from the
+          three fixed rows (nav row ~54px + search row ~56px + partner
+          strip ~40px); a floor only — the header still grows if its
+          content ever needs more room. */}
+      <header className="sticky top-0 z-40 min-h-[150px] border-b border-[var(--border)] bg-black/95 pt-safe backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
           <button type="button" aria-label="Open menu" onClick={() => setDrawer(true)} className="p-1.5 text-white transition active:scale-90"><Icon n="menu" tone="accent" /></button>
           <button type="button" aria-label="Pulse Video home" onClick={() => goTab("home")} className="flex shrink-0 items-center transition active:scale-[0.97]">
@@ -2245,8 +2256,12 @@ export function App() {
 
         {/* ===== ROUTE LOADING (direct deep link, admin catalog still arriving) ===== */}
         {routePending && !notFound && (
-          <section className="pt-16 text-center" aria-label="Loading page">
-            <span className="mx-auto flex items-center justify-center" role="status" aria-label="Loading">
+          <section className="text-center" aria-label="Loading page">
+            {/* CLS: reserve the exact 16:9 player box (same -mx-4/mt-3
+                geometry as the player) so the title, tags and lists
+                below do not jump down when the video mounts. */}
+            <div className="-mx-4 mt-3 aspect-video bg-[var(--surface)] sm:mx-0 sm:rounded-xl" aria-hidden="true" />
+            <span className="mx-auto mt-8 flex items-center justify-center" role="status" aria-label="Loading">
               <svg className="pv-spinner" width="44" height="44" viewBox="0 0 50 50" fill="none" aria-hidden="true">
                 <circle cx="25" cy="25" r="20" stroke="rgba(255,255,255,.25)" strokeWidth="5" />
                 <path d="M45 25a20 20 0 0 0-20-20" stroke="#f43f5e" strokeWidth="5" strokeLinecap="round" />
@@ -2675,7 +2690,7 @@ export function App() {
                 </div>
               ) : (
                 <div className="mt-5 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {paged.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                  {paged.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} priority={i === 0} />)}
                 </div>
               )}
 

@@ -34,6 +34,39 @@ export interface InteractionRow {
 
 const INTERACTIONS_PATH = "data/interactions.json";
 const ADMIN_STATE_PATH = "data/admin-state.json";
+/* Prebuilt sitemap cache (speed round, item 3): one document holding
+   the built sitemap XML per site origin, so /sitemap.xml serves a
+   stored string instead of re-reading the 233 KB admin payload and
+   rebuilding ~300 KB of XML on every request. Keyed by origin so a
+   Preview deployment can never poison Production's copy (each
+   origin's entry is built from its own request). Entries are
+   invalidated (wiped) on every admin save/reset; a 24 h TTL in the
+   handler is the safety valve if an invalidation is ever missed. */
+const SITEMAP_CACHE_PATH = "data/sitemap-cache.json";
+
+export interface SitemapCacheEntry {
+  xml: string;
+  builtAt: number; // ms epoch
+}
+
+export interface SitemapCacheDoc {
+  entries: Record<string, SitemapCacheEntry>;
+}
+
+export async function getSitemapCache(origin: string): Promise<SitemapCacheEntry | null> {
+  const doc = await readJson<SitemapCacheDoc | null>(SITEMAP_CACHE_PATH, "sitemap-cache.json", null);
+  return doc?.entries?.[origin] ?? null;
+}
+
+export async function saveSitemapCache(origin: string, xml: string): Promise<void> {
+  const doc = (await readJson<SitemapCacheDoc | null>(SITEMAP_CACHE_PATH, "sitemap-cache.json", null)) ?? { entries: {} };
+  doc.entries[origin] = { xml, builtAt: Date.now() };
+  await writeJson(SITEMAP_CACHE_PATH, "sitemap-cache.json", doc);
+}
+
+export async function invalidateSitemapCache(): Promise<void> {
+  await writeJson(SITEMAP_CACHE_PATH, "sitemap-cache.json", { entries: {} });
+}
 
 function blobToken(): string | undefined {
   return process.env.BLOB_READ_WRITE_TOKEN || undefined;

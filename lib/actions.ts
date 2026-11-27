@@ -8,10 +8,12 @@
 
 import { z } from "zod";
 import { checkAdminCode, issueAdminToken, requireAdmin } from "./admin-auth.js";
+import { parseAdminState, toSlimAdminState } from "./catalog.js";
 import { resolveEmbedFile, type EmbedFileResult } from "./resolve-embed.js";
 import {
   clearHistory,
   getAdminPayload,
+  invalidateSitemapCache,
   listInteractions,
   recordHistory,
   resetAdminPayload,
@@ -153,11 +155,21 @@ export const ACTIONS: Record<string, ActionDef> = {
   },
 
   getAdminState: {
-    request: z.object({}),
-    handler: async () => {
+    request: z.object({ slim: z.boolean().optional() }),
+    handler: async (args: { slim?: boolean }) => {
       // Deliberately NO token — same as the Muse version: the payload is
       // exactly the content the public site itself renders.
-      return { payload: await getAdminPayload() };
+      const payload = await getAdminPayload();
+      /* Speed round, item 4: `slim: true` returns the public-listing
+         variant (see toSlimAdminState in lib/catalog.ts) — same
+         response shape, `{ payload }`, so existing clients are
+         unaffected. The default (no flag) is the full payload the
+         admin panel needs. The admin panel must NEVER use the slim
+         variant: saving slim state would wipe every description. */
+      if (args.slim && payload) {
+        return { payload: JSON.stringify(toSlimAdminState(parseAdminState(payload))) };
+      }
+      return { payload };
     },
   },
 
@@ -175,6 +187,15 @@ export const ACTIONS: Record<string, ActionDef> = {
       requireAdmin(args.token);
       assertValidAdminPayload(args.payload);
       await saveAdminPayload(args.payload);
+      /* Speed round, item 3: the saved catalog changed, so the
+         cached sitemap is stale — wipe it; the next /sitemap.xml
+         request rebuilds it from the new payload. Best-effort: a
+         cache failure must never fail a save that already landed. */
+      try {
+        await invalidateSitemapCache();
+      } catch (err) {
+        console.error("[actions] sitemap cache invalidate failed:", err instanceof Error ? err.message : err);
+      }
       return { ok: true as const };
     },
   },
@@ -184,6 +205,11 @@ export const ACTIONS: Record<string, ActionDef> = {
     handler: async (args: { token: string }) => {
       requireAdmin(args.token);
       await resetAdminPayload();
+      try {
+        await invalidateSitemapCache();
+      } catch (err) {
+        console.error("[actions] sitemap cache invalidate failed:", err instanceof Error ? err.message : err);
+      }
       return { ok: true as const };
     },
   },

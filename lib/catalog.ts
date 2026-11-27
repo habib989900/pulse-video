@@ -182,8 +182,11 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
         return b ? { ...d, label: typeof b.label === "string" ? b.label : d.label, link: typeof b.link === "string" ? b.link : d.link } : { ...d };
       }),
       seo: { ...base.seo, ...(p.seo ?? {}) },
-      addedVideos: Array.isArray(p.addedVideos) ? p.addedVideos : [],
-      overrides: p.overrides && typeof p.overrides === "object" ? p.overrides : {},
+      addedVideos: Array.isArray(p.addedVideos) ? p.addedVideos.map((v) => normalizeAdminVideo(v as Partial<AdminVideo> & { id: string })) : [],
+      overrides:
+        p.overrides && typeof p.overrides === "object"
+          ? Object.fromEntries(Object.entries(p.overrides).map(([k, v]) => [k, normalizeAdminVideo(v as Partial<AdminVideo> & { id: string })]))
+          : {},
       deletedIds: Array.isArray(p.deletedIds) ? p.deletedIds : [],
       taxonomy: {
         categories: { ...emptyTax(), ...(p.taxonomy?.categories ?? {}) },
@@ -197,6 +200,83 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
     console.warn("[admin-state] payload failed to parse, using defaults:", err instanceof Error ? err.message : err);
     return base;
   }
+}
+
+/* Fills a partial AdminVideo (e.g. from the slim public payload,
+   which omits fields the listing path never reads) out to a full
+   AdminVideo, so buildEffective and the video page can consume slim
+   and full payloads through the same code. A no-op for full
+   payloads: every field is already present. */
+export function normalizeAdminVideo(v: Partial<AdminVideo> & { id: string }): AdminVideo {
+  return {
+    id: v.id,
+    title: v.title ?? null,
+    description: v.description ?? null,
+    embedUrl: v.embedUrl ?? null,
+    durationSec: v.durationSec ?? null,
+    views: v.views ?? null,
+    days: v.days ?? null,
+    dateStr: v.dateStr ?? null,
+    creator: v.creator ?? null,
+    channel: v.channel ?? null,
+    category: v.category ?? null,
+    tags: Array.isArray(v.tags) ? [...v.tags] : [],
+    thumbnailUrl: v.thumbnailUrl ?? null,
+    seoTitle: v.seoTitle ?? null,
+    seoDescription: v.seoDescription ?? null,
+    featured: v.featured ?? false,
+    badgeNew: v.badgeNew ?? false,
+    rating: v.rating ?? null,
+    hd: v.hd ?? false,
+  };
+}
+
+/* Slim public-listing variant of an AdminState: the same shape (so
+   parseAdminState + buildEffective consume it unchanged), but each
+   video keeps only what home/list/search pages and the player need —
+   id, title, thumbnail, duration, views, age, category, tags,
+   creator (model), channel, badges and the embed URL. Dropped per
+   video: description, seoTitle, seoDescription, dateStr. Measured
+   on the live 2026-11-27 backup (198 videos): the dropped fields
+   are 26,916 B of the 209,323 B inner payload (~13% of the served
+   233,847 B); the rest is tags/titles/thumbnails the listings
+   genuinely need, so the slim variant cannot get much smaller
+   without dropping data the cards render. Texts, buttons, SEO,
+   taxonomy and deletedIds are kept whole (small, and the site
+   cannot render without them). The admin panel must NEVER load or
+   save this variant — a save from slim state would persist the
+   dropped fields as null and wipe every video description. */
+export function toSlimAdminState(admin: AdminState): AdminState {
+  const slimVideo = (v: AdminVideo): AdminVideo => ({
+    id: v.id,
+    title: v.title,
+    description: null,
+    embedUrl: v.embedUrl,
+    durationSec: v.durationSec,
+    views: v.views,
+    days: v.days,
+    dateStr: null,
+    creator: v.creator,
+    channel: v.channel,
+    category: v.category,
+    tags: [...v.tags],
+    thumbnailUrl: v.thumbnailUrl,
+    seoTitle: null,
+    seoDescription: null,
+    featured: v.featured,
+    badgeNew: v.badgeNew,
+    rating: v.rating,
+    hd: v.hd,
+  });
+  return {
+    texts: { ...admin.texts },
+    buttons: admin.buttons.map((b) => ({ ...b })),
+    seo: { ...admin.seo },
+    addedVideos: admin.addedVideos.map(slimVideo),
+    overrides: Object.fromEntries(Object.entries(admin.overrides).map(([k, v]) => [k, slimVideo(v)])),
+    deletedIds: [...admin.deletedIds],
+    taxonomy: JSON.parse(JSON.stringify(admin.taxonomy)) as AdminState["taxonomy"],
+  };
 }
 
 function gradientFor(seed: string): [string, string] {

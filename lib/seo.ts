@@ -39,7 +39,17 @@ export function siteBaseFromRequest(req: VercelRequest): string {
 }
 
 export async function renderSitemapXml(base: string): Promise<string> {
+  return (await renderSitemapXmlDetailed(base)).xml;
+}
+
+/* Same build, but reports whether the saved admin payload was
+   actually read: the sitemap handler must only cache a build made
+   from the real payload, never the built-in fallback served when
+   the store read fails (caching that would freeze the sitemap on
+   the catalog without the owner's imports). */
+export async function renderSitemapXmlDetailed(base: string): Promise<{ xml: string; payloadOk: boolean }> {
   let payload: string | null = null;
+  let payloadOk = true;
   try {
     payload = await getAdminPayload();
   } catch (err) {
@@ -47,9 +57,10 @@ export async function renderSitemapXml(base: string): Promise<string> {
       "[seo] admin payload read failed, serving built-in catalog:",
       err instanceof Error ? err.message : err,
     );
+    payloadOk = false;
   }
   const eff = buildEffective(parseAdminState(payload));
-  return buildSitemapXml(base, eff);
+  return { xml: buildSitemapXml(base, eff), payloadOk };
 }
 
 export function renderRobotsTxt(base: string): string {

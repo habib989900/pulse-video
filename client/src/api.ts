@@ -56,6 +56,16 @@ export const api = {
   getState: (_args: Record<string, never>): Promise<ViewerState> => call("getState", _args),
   getAdminState: (_args: Record<string, never>): Promise<{ payload: string | null }> =>
     call("getAdminState", _args),
+  /* Slim public-listing variant of getAdminState (speed round,
+     item 4): same `{ payload }` shape, but each video keeps only
+     what home/list/search pages and the player need — descriptions
+     and SEO text are dropped, so the payload is ~13% smaller on the
+     live catalog. The admin panel must NEVER use this: saving slim
+     state would persist the dropped fields as null and wipe every
+     video description. Use getAdminState (full) for the panel and
+     for the video page's description. */
+  getAdminStateSlim: (): Promise<{ payload: string | null }> =>
+    call("getAdminState", { slim: true }),
   toggleInteraction: (args: { kind: InteractionKind; itemKey: string }): Promise<{ active: boolean }> =>
     call("toggleInteraction", args),
   recordHistory: (args: { itemKey: string }): Promise<{ ok: true }> => call("recordHistory", args),
