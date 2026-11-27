@@ -660,8 +660,8 @@ export type SitemapData = { videos: Video[]; categories: { name: string }[]; cre
 
 export function buildSitemapXml(base: string, d: SitemapData): string {
   const today = new Date().toISOString().slice(0, 10);
-  const url = (route: string, lastmod: string, freq: string, prio: string) =>
-    `  <url>\n    <loc>${xmlEsc(publicUrl(base, route))}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${freq}</changefreq>\n    <priority>${prio}</priority>\n  </url>`;
+  const url = (route: string, lastmod: string, freq: string, prio: string, extra?: string | null) =>
+    `  <url>\n    <loc>${xmlEsc(publicUrl(base, route))}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${freq}</changefreq>\n    <priority>${prio}</priority>${extra ? `\n${extra}` : ""}\n  </url>`;
   const out: string[] = [
     url("/", today, "daily", "1.0"),
     url("/most-popular", today, "daily", "0.8"),
@@ -673,12 +673,39 @@ export function buildSitemapXml(base: string, d: SitemapData): string {
     url("/channels", today, "weekly", "0.7"),
     url("/tags", today, "weekly", "0.7"),
   ];
-  for (const v of d.videos) out.push(url(`/video/${v.id}`, v.hasDate ? isoDateFromDays(v.days) : today, "weekly", "0.9"));
+  for (const v of d.videos) out.push(url(`/video/${v.id}`, v.hasDate ? isoDateFromDays(v.days) : today, "weekly", "0.9", videoSitemapBlock(base, v)));
   for (const c of d.categories) out.push(url(`/categories/${slugify(c.name)}`, today, "weekly", "0.7"));
   for (const c of d.creators) out.push(url(`/models/${slugify(c.name)}`, today, "weekly", "0.7"));
   for (const c of d.channels) out.push(url(`/channels/${slugify(c.name)}`, today, "weekly", "0.6"));
   for (const t of d.tags) out.push(url(`/tag/${slugify(t.name)}`, today, "weekly", "0.6"));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${out.join("\n")}\n</urlset>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">\n${out.join("\n")}\n</urlset>\n`;
+}
+
+/* Google Video Sitemap entry for one video: a <video:video> block
+   inside the video page's <url> entry, so crawlers can index the
+   video itself even though the site is hash-routed and its JSON-LD is
+   client-rendered — the served sitemap is the crawler-visible part of
+   the VideoObject system. Only videos with a real image thumbnail
+   get one: a .mp4 "thumbnail" is a movie, not an image, and
+   thumbnail_loc must be an absolute image URL. player_loc is the
+   page where the video plays — never a signed/expiring storage file
+   URL. family_friendly is "no": the site declares an adult rating
+   in its meta. */
+export function videoSitemapBlock(base: string, v: Video): string | null {
+  const thumb = v.thumbnailUrl;
+  if (!thumb || isVideoFileUrl(thumb) || !/^https?:\/\//i.test(thumb)) return null;
+  const title = v.title.replace(/\s+/g, " ").trim().slice(0, 100);
+  const desc = (v.description?.replace(/\s+/g, " ").trim() || `Watch ${v.title} — streaming in HD on Pulse Video.`).slice(0, 2048);
+  const lines = [
+    `    <video:thumbnail_loc>${xmlEsc(thumb)}</video:thumbnail_loc>`,
+    `    <video:title>${xmlEsc(title)}</video:title>`,
+    `    <video:description>${xmlEsc(desc)}</video:description>`,
+    `    <video:player_loc>${xmlEsc(publicUrl(base, `/video/${v.id}`))}</video:player_loc>`,
+  ];
+  if (v.durationSec > 0) lines.push(`    <video:duration>${Math.floor(v.durationSec)}</video:duration>`);
+  if (v.hasDate) lines.push(`    <video:publication_date>${isoDateFromDays(v.days)}</video:publication_date>`);
+  lines.push(`    <video:family_friendly>no</video:family_friendly>`);
+  return `  <video:video>\n${lines.join("\n")}\n  </video:video>`;
 }
 
 export function buildRobotsTxt(base: string): string {

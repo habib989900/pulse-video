@@ -712,6 +712,8 @@ function EmbedPlayer({ v }: { v: Video }) {
      position/time for the tooltip. */
   const [buffered, setBuffered] = useState<{ s: number; e: number }[]>([]);
   const [seekHover, setSeekHover] = useState<{ pct: number; time: number } | null>(null);
+  const seekBtnRef = useRef<HTMLButtonElement | null>(null);
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
   /* HLS streams (the extra resolutions some sources publish as
      playlists) play natively in Safari; everywhere else the hls.js
      attach effect below drives the same <video> element. The
@@ -743,6 +745,27 @@ function EmbedPlayer({ v }: { v: Video }) {
   /* Controls auto-hide: bar fades ~3s after the last activity while
      playing, never while paused or while the quality/speed menu is open. */
   const hide = useAutoHideControls(playing, qMenuOpen || speedMenuOpen);
+  /* Seek-bar hover tooltip: the state used to update only on the seek
+     button's own mousemove — but the control bar is pointer-events-none
+     while auto-hidden, so a pointer already sitting over the button
+     when the bar fades back in never fires a mousemove on it (the live
+     test hovered three times and saw no tooltip). The hover is now
+     tracked from the player box's own mousemove (which always fires)
+     against the button's rect, and re-checked from the last known
+     pointer position whenever the bar becomes visible again. */
+  const updateSeekHover = useCallback((clientX: number, clientY: number) => {
+    if (!(duration > 0)) { setSeekHover(null); return; }
+    const r = seekBtnRef.current?.getBoundingClientRect();
+    if (!r) { setSeekHover(null); return; }
+    if (clientX < r.left || clientX > r.right || clientY < r.top - 8 || clientY > r.bottom + 8) { setSeekHover(null); return; }
+    const pct = Math.min(100, Math.max(0, ((clientX - r.left) / r.width) * 100));
+    setSeekHover({ pct, time: (pct / 100) * duration });
+  }, [duration]);
+  useEffect(() => {
+    if (hide.hidden) return;
+    const p = lastPointer.current;
+    if (p) updateSeekHover(p.x, p.y);
+  }, [hide.hidden, updateSeekHover]);
   const fileQ = useQuery({
     queryKey: ["embedFile", v.id],
     queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }),
@@ -925,6 +948,20 @@ function EmbedPlayer({ v }: { v: Video }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [theater, expanded]);
+  /* Theater is 100vw wide — and 100vw includes the vertical
+     scrollbar's width, so the page overflowed horizontally and showed
+     a bottom scrollbar (verified live). While theater is on, lock
+     horizontal overflow on the document and restore it on exit. */
+  useEffect(() => {
+    if (!theater) return;
+    const de = document.documentElement;
+    const b = document.body;
+    const prevDe = de.style.overflowX;
+    const prevB = b.style.overflowX;
+    de.style.overflowX = "hidden";
+    b.style.overflowX = "hidden";
+    return () => { de.style.overflowX = prevDe; b.style.overflowX = prevB; };
+  }, [theater]);
   /* Keyboard shortcuts — native player only; the sandboxed iframe
      fallback cannot be driven from here, so shortcuts stay inert
      there (its own fullscreen button still works). Space/K play-pause,
@@ -969,7 +1006,7 @@ function EmbedPlayer({ v }: { v: Video }) {
   }, [nativeSrc, qMenuOpen, speedMenuOpen]);
   return (
     <>
-      <div ref={boxRef} onMouseMove={hide.poke} onTouchStart={hide.poke} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : theater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : theater ? { aspectRatio: "16/9", width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9" }}>
+      <div ref={boxRef} onMouseMove={(e) => { hide.poke(); lastPointer.current = { x: e.clientX, y: e.clientY }; updateSeekHover(e.clientX, e.clientY); }} onTouchStart={hide.poke} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : theater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : theater ? { aspectRatio: "16/9", width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9" }}>
         {nativeSrc ? (
           <>
             <video key={nativeSrc} ref={videoRef} referrerPolicy="no-referrer" src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={(e) => tap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onProgress={updateBuffered} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); updateBuffered(); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
@@ -1025,7 +1062,7 @@ function EmbedPlayer({ v }: { v: Video }) {
                   <button type="button" aria-label={isFs ? "Exit fullscreen" : "Fullscreen"} aria-pressed={isFs} onClick={toggleFullscreen} className="p-1.5"><Icon n={isFs ? "compress" : "expand"} size={20} /></button>
                 </span>
               </div>
-              <button type="button" aria-label="Seek" onClick={(e) => seekTo(e.clientX, e.currentTarget)} onMouseMove={(e) => { if (!(duration > 0)) return; const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setSeekHover({ pct, time: (pct / 100) * duration }); }} onMouseLeave={() => setSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
+              <button type="button" aria-label="Seek" ref={seekBtnRef} onClick={(e) => seekTo(e.clientX, e.currentTarget)} onMouseEnter={(e) => updateSeekHover(e.clientX, e.clientY)} onMouseMove={(e) => { if (!(duration > 0)) return; const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setSeekHover({ pct, time: (pct / 100) * duration }); }} onMouseLeave={() => setSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
                 {seekHover && (
                   <span className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2 py-1 text-xs font-bold text-white shadow" style={{ left: `${Math.min(96, Math.max(4, seekHover.pct))}%` }}>{fmtDur(Math.floor(seekHover.time))}</span>
                 )}
@@ -1925,6 +1962,8 @@ export function App() {
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [artTheater, setArtTheater] = useState(false);
   const [artSeekHover, setArtSeekHover] = useState<{ pct: number; time: number } | null>(null);
+  const artSeekBtnRef = useRef<HTMLButtonElement | null>(null);
+  const artLastPointer = useRef<{ x: number; y: number } | null>(null);
   const [notice, setNotice] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [autoplay, setAutoplay] = useState(true);
@@ -1986,6 +2025,25 @@ export function App() {
   /* Catalog player controls auto-hide: same 3s rule as the native
      player, never while paused or while the speed menu is open. */
   const artHide = useAutoHideControls(playing, speedMenuOpen);
+  /* Art-player seek tooltip: same fix as the native player — the bar
+     is pointer-events-none while auto-hidden, so the hover is tracked
+     from the player box's own mousemove against the button's rect and
+     re-checked from the last known pointer position whenever the bar
+     becomes visible again. */
+  const artDurSec = current?.durationSec ?? 0;
+  const updateArtSeekHover = useCallback((clientX: number, clientY: number) => {
+    if (!(artDurSec > 0)) { setArtSeekHover(null); return; }
+    const r = artSeekBtnRef.current?.getBoundingClientRect();
+    if (!r) { setArtSeekHover(null); return; }
+    if (clientX < r.left || clientX > r.right || clientY < r.top - 8 || clientY > r.bottom + 8) { setArtSeekHover(null); return; }
+    const pct = Math.min(100, Math.max(0, ((clientX - r.left) / r.width) * 100));
+    setArtSeekHover({ pct, time: (pct / 100) * artDurSec });
+  }, [artDurSec]);
+  useEffect(() => {
+    if (artHide.hidden) return;
+    const p = artLastPointer.current;
+    if (p) updateArtSeekHover(p.x, p.y);
+  }, [artHide.hidden, updateArtSeekHover]);
   /* Leaving a video (or opening another) always leaves expanded mode,
      so the next page never starts with the player covering it. */
   useEffect(() => { artFs.collapse(); setArtTheater(false); setSpeedMenuOpen(false); setArtSeekHover(null); // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2348,6 +2406,18 @@ export function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [artTheater, artFs.expanded]);
+  /* Same 100vw overflow lock as the native player while the art
+     player's theater mode is on (see above). */
+  useEffect(() => {
+    if (!artTheater) return;
+    const de = document.documentElement;
+    const b = document.body;
+    const prevDe = de.style.overflowX;
+    const prevB = b.style.overflowX;
+    de.style.overflowX = "hidden";
+    b.style.overflowX = "hidden";
+    return () => { de.style.overflowX = prevDe; b.style.overflowX = prevB; };
+  }, [artTheater]);
   /* Keyboard shortcuts for the catalog (art) player — same set as the
      native player. The embed player registers its own; only one player
      is ever mounted, so they never double-fire. */
@@ -2623,15 +2693,25 @@ export function App() {
     const graph: JsonLd[] = [];
     if (current) {
       const dur = isoDuration(current.durationSec);
+      /* contentUrl goes in only for a stable direct media file (an
+         admin-pasted .mp4/.webm link): an imported embed's resolved
+         file is a signed, expiring URL, so it never belongs in
+         structured data — the embedUrl below is the stable reference
+         there, and the video sitemap carries player_loc instead. */
+      const embSrc = current.embedUrl ? resolveEmbed(current.embedUrl) : null;
       graph.push({
         "@type": "VideoObject",
         name: current.title,
         description: desc,
         url: pageUrl,
+        inLanguage: "en",
+        isFamilyFriendly: false,
+        genre: current.category,
         ...(ogImage ? { thumbnailUrl: [ogImage] } : {}),
         ...(current.hasDate ? { uploadDate: isoDateFromDays(current.days) } : {}),
         ...(dur ? { duration: dur } : {}),
-        ...(current.embedUrl ? { embedUrl: resolveEmbed(current.embedUrl).src } : {}),
+        ...(embSrc ? { embedUrl: embSrc.src } : {}),
+        ...(embSrc && embSrc.kind === "file" ? { contentUrl: embSrc.src } : {}),
         ...(current.hasViews ? { interactionStatistic: { "@type": "InteractionCounter", interactionType: { "@type": "WatchAction" }, userInteractionCount: current.views } } : {}),
         ...(current.creator ? { actor: { "@type": "Person", name: current.creator } } : {}),
       });
@@ -2918,7 +2998,7 @@ export function App() {
             {current.embedUrl ? (
               <EmbedPlayer v={current} />
             ) : (
-            <div ref={playerRef} onMouseMove={artHide.poke} onTouchStart={artHide.poke} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : artTheater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : artTheater ? { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})`, width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
+            <div ref={playerRef} onMouseMove={(e) => { artHide.poke(); artLastPointer.current = { x: e.clientX, y: e.clientY }; updateArtSeekHover(e.clientX, e.clientY); }} onTouchStart={artHide.poke} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : artTheater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : artTheater ? { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})`, width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
               <Motif v={current} big />
               <span className="absolute inset-0 bg-black/25" aria-hidden="true" />
               <SeekFlash flash={artTap.flash} />
@@ -2949,7 +3029,7 @@ export function App() {
                     <button type="button" aria-label={artFs.big ? "Exit fullscreen" : "Fullscreen"} aria-pressed={artFs.big} onClick={artFs.toggle} className="p-1.5"><Icon n={artFs.big ? "compress" : "expand"} size={20} tone="accent" /></button>
                   </span>
                 </div>
-                <button type="button" aria-label="Seek" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setProgress(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100))); }} onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setArtSeekHover({ pct, time: (pct / 100) * current.durationSec }); }} onMouseLeave={() => setArtSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
+                <button type="button" aria-label="Seek" ref={artSeekBtnRef} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setProgress(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100))); }} onMouseEnter={(e) => updateArtSeekHover(e.clientX, e.clientY)} onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)); setArtSeekHover({ pct, time: (pct / 100) * current.durationSec }); }} onMouseLeave={() => setArtSeekHover(null)} className="group/seek relative mt-1 block h-4 w-full">
                   {artSeekHover && (
                     <span className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2 py-1 text-xs font-bold text-white shadow" style={{ left: `${Math.min(96, Math.max(4, artSeekHover.pct))}%` }}>{fmtTime(artSeekHover.time)}</span>
                   )}
