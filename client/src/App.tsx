@@ -767,7 +767,11 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
     queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }),
     enabled: isGatedIframe,
     staleTime: 5 * 60_000,
-    retry: false,
+    /* A single blip on a flaky mobile connection used to drop the
+       viewer straight into the source's embed player: the resolve
+       never retried. Two retries (a few seconds) ride out a stall;
+       a genuinely unresolvable embed still falls back after them. */
+    retry: 2,
   });
   /* Pin the stream the viewer actually watches. A background refetch
      (likes, saves and history all invalidate every query) returns a
