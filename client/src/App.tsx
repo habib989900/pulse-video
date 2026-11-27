@@ -250,9 +250,9 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
         /* The "thumbnail" is itself a video file (e.g. an XNXX
            preview.mp4): play it as a muted looping preview — an <img>
            would error and leave the placeholder up forever. */
-        <video referrerPolicy="no-referrer" src={v.thumbnailUrl} width={640} height={360} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
+        <video referrerPolicy="no-referrer" src={v.thumbnailUrl} width={640} height={360} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover ${priority ? "transition-none" : "transition-opacity duration-300"} ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
       ) : (
-        <img src={cardThumbUrl(v.thumbnailUrl) ?? v.thumbnailUrl} alt="" width={392} height={294} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={(e) => { const full = fullThumbUrl((e.currentTarget as HTMLImageElement).src); if (full && (e.currentTarget as HTMLImageElement).src !== full) { (e.currentTarget as HTMLImageElement).src = full; return; } setImgState("err"); }} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
+        <img src={cardThumbUrl(v.thumbnailUrl) ?? v.thumbnailUrl} alt="" width={392} height={294} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={(e) => { const full = fullThumbUrl((e.currentTarget as HTMLImageElement).src); if (full && (e.currentTarget as HTMLImageElement).src !== full) { (e.currentTarget as HTMLImageElement).src = full; return; } setImgState("err"); }} className={`absolute inset-0 h-full w-full object-cover ${priority ? "transition-none" : "transition-opacity duration-300"} ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
       {badge && <span className="absolute left-2 top-2 rounded-md bg-[var(--accent)] px-2 py-0.5 text-[11px] font-black tracking-wide text-white shadow">{badge}</span>}
@@ -2754,7 +2754,7 @@ export function App() {
             )}
 
             {latestHome.length > 0 && (
-            <section aria-label="Latest videos" className="pt-7">
+            <section aria-label="Latest videos" className="pt-7 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{chip === "All" ? texts.secLatest : `${chip} videos`}</h2>
                 <button type="button" onClick={() => openListing({ kind: "feed", name: "New" })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
@@ -2776,7 +2776,7 @@ export function App() {
                 the Models tab. With none, the section hides instead of
                 parading "0 videos" entries. */}
             {CREATORS.some((c) => c.videos > 0) && (
-            <section aria-label="Popular models" className="pt-9">
+            <section aria-label="Popular models" className="pt-9 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secModels}</h2>
                 <button type="button" onClick={() => goTab("creators")} className="py-1 text-[13px] text-[var(--dim)]">All models</button>
@@ -2797,7 +2797,7 @@ export function App() {
                 are showcased on home; empty ones stay on the Channels
                 tab, and the section hides when none qualify. */}
             {CHANNELS.some((ch) => Number(ch.videos) > 0) && (
-            <section aria-label="Channels" className="pt-9">
+            <section aria-label="Channels" className="pt-9 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secChannels}</h2>
                 <button type="button" onClick={() => goTab("channels")} className="py-1 text-[13px] text-[var(--dim)]">All channels</button>
@@ -2814,7 +2814,7 @@ export function App() {
             )}
 
             {becauseList.length > 0 && (
-            <section aria-label={`Because you watch ${becauseCat}`} className="pt-9">
+            <section aria-label={`Because you watch ${becauseCat}`} className="pt-9 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secBecause} {becauseCat}</h2>
                 <button type="button" onClick={() => openListing({ kind: "category", name: becauseCat })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
@@ -2827,7 +2827,7 @@ export function App() {
             )}
 
             {topRated.length > 0 && (
-            <section aria-label="Top rated" className="pt-9">
+            <section aria-label="Top rated" className="pt-9 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secTopRated}</h2>
                 <button type="button" onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>

@@ -64,8 +64,24 @@ export const api = {
      state would persist the dropped fields as null and wipe every
      video description. Use getAdminState (full) for the panel and
      for the video page's description. */
-  getAdminStateSlim: (): Promise<{ payload: string | null }> =>
-    call("getAdminState", { slim: true }),
+  getAdminStateSlim: async (): Promise<{ payload: string | null }> => {
+    /* PageSpeed round (2026-11-27): index.html boot-prefetches this
+       exact request while the JS bundle is still downloading, so the
+       home page's first card does not wait for React to mount. Take
+       that stashed promise for the first call only; a rejection (or
+       a missing stash) falls through to a normal request. */
+    const w = window as unknown as { __pvBootAdmin?: Promise<{ payload: string | null }> };
+    if (w.__pvBootAdmin) {
+      const boot = w.__pvBootAdmin;
+      delete w.__pvBootAdmin;
+      try {
+        return await boot;
+      } catch {
+        /* fall through to a normal call below */
+      }
+    }
+    return call("getAdminState", { slim: true });
+  },
   toggleInteraction: (args: { kind: InteractionKind; itemKey: string }): Promise<{ active: boolean }> =>
     call("toggleInteraction", args),
   recordHistory: (args: { itemKey: string }): Promise<{ ok: true }> => call("recordHistory", args),
