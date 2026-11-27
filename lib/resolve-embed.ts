@@ -211,6 +211,17 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
     if (/(^|\.)freepornvideos\.xxx$/i.test(u.hostname)) {
       if (!/^\/embed\/\d+/.test(u.pathname)) return empty;
       const embedPageUrl = u.toString();
+      /* Short-lived step log (status codes only, no URLs or tokens):
+         this host's fetches behave differently from the Vercel
+         function than from a developer shell (XNXX 404s Vercel
+         outright), so a failed resolve must say WHERE it failed. */
+      const dbg = (step: string, extra?: string) => {
+        try {
+          console.log(`[resolve-xxx] ${step}${extra ? ` ${extra}` : ""}`);
+        } catch {
+          /* logging must never break the resolve */
+        }
+      };
       const jar = new Map<string, string>();
       const collectCookies = (res: Response) => {
         if (typeof res.headers.getSetCookie !== "function") return;
@@ -222,11 +233,14 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       };
       const cookieHeader = () => [...jar.values()].join("; ");
       const pageRes = await fetch(embedPageUrl, {
-        headers: { ...ua, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
+        headers: { ...browserHeaders, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
         redirect: "follow",
         signal: fetchTimeout(),
       });
-      if (!pageRes.ok) return empty;
+      if (!pageRes.ok) {
+        dbg("embed-page", `status=${pageRes.status}`);
+        return empty;
+      }
       collectCookies(pageRes);
       const html = await pageRes.text();
       const grab = (name: string): string | null => {
@@ -235,13 +249,19 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         return m && m[1] ? m[1] : null;
       };
       const videoPageUrl = grab("video_url");
-      if (!videoPageUrl) return empty;
+      if (!videoPageUrl) {
+        dbg("embed-page", "no video_url");
+        return empty;
+      }
       const vpRes = await fetch(videoPageUrl, {
-        headers: { ...ua, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
+        headers: { ...browserHeaders, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
         redirect: "follow",
         signal: fetchTimeout(),
       });
-      if (!vpRes.ok) return empty;
+      if (!vpRes.ok) {
+        dbg("video-page", `status=${vpRes.status}`);
+        return empty;
+      }
       collectCookies(vpRes);
       const vpHtml = await vpRes.text();
       const cookie = cookieHeader();
@@ -255,7 +275,10 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         if (!url || bySuffix.has(suf)) continue;
         bySuffix.set(suf, url);
       }
-      if (bySuffix.size === 0) return empty;
+      if (bySuffix.size === 0) {
+        dbg("video-page", "no get_file urls");
+        return empty;
+      }
       const followGated = async (filePageUrl: string | null): Promise<string | null> => {
         if (!filePageUrl) return null;
         try {
@@ -280,7 +303,11 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       if (f720) streams.push({ url: f720, label: "720p", hls: false });
       if (f2160) streams.push({ url: f2160, label: "4k", hls: false });
       const fast = f480 ?? f720 ?? f2160;
-      if (!fast) return empty;
+      if (!fast) {
+        dbg("gated", `480=${!!f480} 720=${!!f720} 2160=${!!f2160}`);
+        return empty;
+      }
+      dbg("ok", `streams=${streams.length}`);
       return done({
         fileUrl: fast,
         hdFileUrl: f2160 && f2160 !== fast ? f2160 : f720 && f720 !== fast ? f720 : null,
