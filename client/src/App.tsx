@@ -1970,9 +1970,14 @@ export function App() {
   const topByCategory = useMemo(() => {
     const m = new Map<string, Video>();
     for (const c of CATEGORIES) {
-      const pool = VIDEOS.filter((v) => v.category === c.name);
+      /* Same rule as the category count and the category listing:
+         the video's category, or one of its tags — otherwise a
+         category like Anal (1 video filed under it, 40 more tagged
+         with it) would pick a thumbnail-less video and the card
+         would show only the white placeholder. */
+      const pool = VIDEOS.filter((v) => v.category === c.name || v.tags.includes(c.name.toLowerCase()));
       const withThumb = [...pool].sort((a, b) => b.views - a.views).find((v) => v.thumbnailUrl);
-      const top = withThumb ?? [...pool].sort((a, b) => b.views - a.views)[0] ?? VIDEOS.filter((v) => v.tags.includes(c.name.toLowerCase())).sort((a, b) => b.views - a.views)[0];
+      const top = withThumb ?? [...pool].sort((a, b) => b.views - a.views)[0];
       if (top) m.set(c.name, top);
     }
     return m;
