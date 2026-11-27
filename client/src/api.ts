@@ -18,6 +18,7 @@ export interface EmbedFileResult {
   hdFileUrl: string | null;
   fastLabel: string | null;
   streams: EmbedStream[];
+  expiresAt: number | null;
 }
 
 export interface ViewerState {
@@ -28,11 +29,22 @@ export interface ViewerState {
 }
 
 async function call<T>(action: string, args: Record<string, unknown>): Promise<T> {
-  const res = await fetch("/api/actions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, args }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, args }),
+      /* The serverless function caps at ~10s of work; a hung request
+         must fail loudly instead of spinning forever. */
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new Error("Request timed out — please try again");
+    }
+    throw e;
+  }
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) {
     throw new Error(data.error ?? `Request failed: ${res.status}`);
@@ -47,7 +59,7 @@ export const api = {
   toggleInteraction: (args: { kind: InteractionKind; itemKey: string }): Promise<{ active: boolean }> =>
     call("toggleInteraction", args),
   recordHistory: (args: { itemKey: string }): Promise<{ ok: true }> => call("recordHistory", args),
-  clearHistory: (_args: Record<string, never>): Promise<{ ok: true }> => call("clearHistory", _args),
+  clearHistory: (args: { token: string }): Promise<{ ok: true }> => call("clearHistory", args),
   verifyAdminCode: (args: { code: string }): Promise<{ admin: boolean; token: string | null }> =>
     call("verifyAdminCode", args),
   saveAdminState: (args: { payload: string; token: string }): Promise<{ ok: true }> =>

@@ -13,7 +13,16 @@ if (!rootEl) {
 // app owns a plain one. Mutations already invalidate their own query
 // keys in onSuccess (see App.tsx), so no server-driven invalidation
 // is needed.
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      /* Admin/site data changes rarely and refetching it on every
+         focus/tab switch re-downloaded a ~233 KB payload each time. */
+      staleTime: 60_000,
+      retry: 1,
+    },
+  },
+});
 
 createRoot(rootEl).render(
   <StrictMode>

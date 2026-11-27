@@ -8,6 +8,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { renderRobotsTxt, siteBaseFromRequest } from "../lib/seo.js";
 
+export const config = { maxDuration: 10 };
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");

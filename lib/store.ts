@@ -93,7 +93,21 @@ function sortRows(rows: InteractionRow[]): InteractionRow[] {
 
 export async function listInteractions(): Promise<InteractionRow[]> {
   const rows = await readJson<InteractionRow[]>(INTERACTIONS_PATH, "interactions.json", []);
-  return sortRows(rows);
+  /* A35: drop malformed rows instead of letting one bad row break
+     getState or crash a toggle. A row is valid only if its kind is
+     one of the four, its key is a non-empty string and its id/time
+     are finite numbers. */
+  const valid = rows.filter(
+    (r): r is InteractionRow =>
+      !!r && typeof r === "object" &&
+      (r.kind === "like" || r.kind === "save" || r.kind === "follow" || r.kind === "history") &&
+      typeof r.itemKey === "string" && r.itemKey.length > 0 &&
+      Number.isFinite(r.id) && Number.isFinite(r.createdAt),
+  );
+  if (valid.length !== rows.length) {
+    console.warn(`[store] dropped ${rows.length - valid.length} malformed interaction row(s)`);
+  }
+  return sortRows(valid);
 }
 
 // Monotonic row ids: strictly increasing within this process, and
@@ -126,7 +140,11 @@ export async function recordHistory(itemKey: string): Promise<void> {
   const kept = rows.filter((r) => !(r.kind === "history" && r.itemKey === itemKey));
   const now = Date.now();
   kept.unshift({ id: nextId(), kind: "history", itemKey, createdAt: now });
-  await writeJson(INTERACTIONS_PATH, "interactions.json", kept);
+  /* A39: cap watch history at the 200 newest rows — the document
+     grows without bound otherwise, and every getState reads it. */
+  const history = kept.filter((r) => r.kind === "history").slice(0, 200);
+  const rest = kept.filter((r) => r.kind !== "history");
+  await writeJson(INTERACTIONS_PATH, "interactions.json", sortRows([...history, ...rest]));
 }
 
 export async function clearHistory(): Promise<void> {

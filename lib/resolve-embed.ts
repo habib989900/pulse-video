@@ -6,9 +6,11 @@
 // full quality menu instead of the source's iframe (whose player can
 // refuse embedded playback with a "Blocked content" notice).
 //
-// One change vs the original: each fetch uses an 8 s timeout instead of
-// 12 s, so a resolve stays inside Vercel's 10 s Hobby function limit
-// (the original ran on the Muse runtime with no such cap).
+// One change vs the original: the whole resolve runs under a shared
+// ~9 s deadline with 5 s per fetch, so it stays inside Vercel's 10 s
+// Hobby function limit (the original ran on the Muse runtime with no
+// such cap, and 8 s per fetch could run 16–24 s and die mid-flight).
+// Successful resolves are cached in memory for 10 min.
 
 export interface EmbedStream {
   url: string;
@@ -21,12 +23,59 @@ export interface EmbedFileResult {
   hdFileUrl: string | null;
   fastLabel: string | null;
   streams: EmbedStream[];
+  /* Best-effort expiry of the signed storage URL (ms epoch), parsed
+     from the URL itself when it carries one — never invented. Null
+     when the URL carries no expiry: the client must treat the URL as
+     short-lived and re-resolve on error, as it already does. */
+  expiresAt: number | null;
 }
 
-const FETCH_TIMEOUT_MS = 8000;
+/* A5: the function has a 10 s Hobby limit, but the old code gave
+   EACH fetch 8 s — a resolve could run 16–24 s and die mid-flight.
+   One shared ~9 s deadline caps the whole resolve, each fetch gets
+   5 s, and the fastest fetches (homepage + embed page) run first.
+   Successful resolves are cached in memory for 10 min: the same
+   video re-resolving on every Like/Save invalidation was wasted
+   work (the signed URL lives ~3 h, far longer than the cache). */
+const PER_FETCH_TIMEOUT_MS = 5000;
+const RESOLVE_DEADLINE_MS = 9000;
+const RESOLVE_CACHE_TTL_MS = 10 * 60_000;
+const resolveCache = new Map<string, { at: number; result: EmbedFileResult }>();
+
+/** Best-effort expiry from a signed URL's own query params
+    (exp/expires/e/expAt as unix seconds, unix ms or an ISO date).
+    Only values in the future and within 30 days are believed. */
+function parseExpiryFromUrl(raw: string): number | null {
+  try {
+    const u = new URL(raw);
+    for (const key of ["exp", "expires", "e", "expAt", "expiresAt"]) {
+      const v = u.searchParams.get(key);
+      if (!v) continue;
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) {
+        const ms = n < 1e12 ? n * 1000 : n;
+        if (ms > Date.now() && ms < Date.now() + 30 * 24 * 3600_000) return ms;
+      }
+      const d = new Date(v);
+      if (!isNaN(d.getTime()) && d.getTime() > Date.now() && d.getTime() < Date.now() + 30 * 24 * 3600_000) return d.getTime();
+    }
+  } catch {
+    /* not a URL — no expiry to parse */
+  }
+  return null;
+}
 
 export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResult> {
-  const empty: EmbedFileResult = { fileUrl: null, hdFileUrl: null, fastLabel: null, streams: [] };
+  const empty: EmbedFileResult = { fileUrl: null, hdFileUrl: null, fastLabel: null, streams: [], expiresAt: null };
+  const cacheKey = embedUrl.trim();
+  const hit = resolveCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < RESOLVE_CACHE_TTL_MS) return hit.result;
+  const deadline = AbortSignal.timeout(RESOLVE_DEADLINE_MS);
+  const fetchTimeout = () => AbortSignal.any([deadline, AbortSignal.timeout(PER_FETCH_TIMEOUT_MS)]);
+  const done = (r: EmbedFileResult): EmbedFileResult => {
+    if (r.fileUrl) resolveCache.set(cacheKey, { at: Date.now(), result: r });
+    return r;
+  };
   try {
     const u = new URL(embedUrl);
     if (u.protocol !== "https:" && u.protocol !== "http:") return empty;
@@ -67,7 +116,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       const pageRes = await fetch(u.toString(), {
         headers: browserHeaders,
         redirect: "follow",
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: fetchTimeout(),
       });
       if (!pageRes.ok) return empty;
       const html = await pageRes.text();
@@ -90,12 +139,18 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
          with no HLS machinery. Nothing is invented: a height the
          playlist does not list never appears. */
       type Stream = { url: string; label: string; hls: boolean; height: number };
-      const byHeight = new Map<number, Stream>();
+      /* Keyed by height for labelled files — but two files can share
+         a height (or have no height in the name at all, h=0): a plain
+         numeric key would let the second silently overwrite the
+         first and drop a stream. Unlabelled files key by URL, and
+         nothing overwrites an existing entry. */
+      const byHeight = new Map<string, Stream>();
       const addMp4 = (u: string | null) => {
         if (!u) return;
         const m = u.match(/_(\d{3,4})p\.mp4/i);
         const h = m && m[1] ? parseInt(m[1], 10) : 0;
-        byHeight.set(h, { url: u, label: h ? `${h}p` : "MP4", hls: false, height: h });
+        const key = h > 0 ? `h${h}` : `u:${u}`;
+        if (!byHeight.has(key)) byHeight.set(key, { url: u, label: h ? `${h}p` : "MP4", hls: false, height: h });
       };
       addMp4(low);
       addMp4(high);
@@ -105,7 +160,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
           const hlsRes = await fetch(hlsMaster, {
             headers: ua,
             redirect: "follow",
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            signal: fetchTimeout(),
           });
           if (hlsRes.ok) {
             const lines = (await hlsRes.text()).split(/\r?\n/);
@@ -116,8 +171,8 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
               const next = (lines[i + 1] ?? "").trim();
               if (!nm || !nm[1] || !next || next.startsWith("#")) continue;
               const h = parseInt(nm[1], 10);
-              if (!byHeight.has(h))
-                byHeight.set(h, { url: new URL(next, hlsMaster).toString(), label: `${h}p`, hls: true, height: h });
+              if (!byHeight.has(`h${h}`))
+                byHeight.set(`h${h}`, { url: new URL(next, hlsMaster).toString(), label: `${h}p`, hls: true, height: h });
             }
           }
         } catch {
@@ -127,12 +182,13 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       const sorted = [...byHeight.values()].sort((a, b) => a.height - b.height);
       const streams = sorted.map(({ url, label, hls }) => ({ url, label, hls }));
       const fastEntry = sorted.find((s) => s.url === fast);
-      return {
+      return done({
         fileUrl: fast,
         hdFileUrl: high && high !== fast ? high : null,
         fastLabel: fastEntry ? fastEntry.label : null,
         streams,
-      };
+        expiresAt: parseExpiryFromUrl(fast),
+      });
     }
     if (u.hostname !== "www.freepornvideo.sex" && u.hostname !== "freepornvideo.sex") return empty;
     const watch = u.pathname.match(/^\/xxx\/(\d+)/);
@@ -162,7 +218,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
       const homeRes = await fetch("https://www.freepornvideo.sex/", {
         headers: ua,
         redirect: "follow",
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: fetchTimeout(),
       });
       if (homeRes.ok) collectCookies(homeRes);
     } catch {
@@ -171,7 +227,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
     const pageRes = await fetch(embedPageUrl, {
       headers: { ...ua, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
       redirect: "follow",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: fetchTimeout(),
     });
     if (!pageRes.ok) return empty;
     collectCookies(pageRes);
@@ -201,7 +257,7 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         const fileRes = await fetch(filePageUrl, {
           headers: { ...ua, ...(cookie ? { Cookie: cookie } : {}), Referer: embedPageUrl },
           redirect: "manual",
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          signal: fetchTimeout(),
         });
         const loc = fileRes.headers.get("location");
         return loc ? new URL(loc, filePageUrl).toString() : null;
@@ -217,8 +273,9 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
     const streams: EmbedStream[] = [];
     if (altFile) streams.push({ url: altFile, label: altLabel ?? "480p", hls: false });
     if (mainFile) streams.push({ url: mainFile, label: mainLabel ?? "Original", hls: false });
-    if (altFile) return { fileUrl: altFile, hdFileUrl: mainFile, fastLabel: altLabel, streams };
-    return { fileUrl: mainFile, hdFileUrl: null, fastLabel: null, streams };
+    const resolvedUrl = altFile ?? mainFile;
+    if (altFile) return done({ fileUrl: altFile, hdFileUrl: mainFile, fastLabel: altLabel, streams, expiresAt: resolvedUrl ? parseExpiryFromUrl(resolvedUrl) : null });
+    return done({ fileUrl: mainFile, hdFileUrl: null, fastLabel: null, streams, expiresAt: resolvedUrl ? parseExpiryFromUrl(resolvedUrl) : null });
   } catch {
     return empty;
   }

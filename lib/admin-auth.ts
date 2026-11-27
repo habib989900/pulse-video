@@ -15,6 +15,12 @@ const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET ?? "";
 const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
 function sign(payload: string): string {
+  /* A14: fail fast when the signing secret is unset instead of
+     issuing tokens signed with an empty key (which anyone who knew
+     the secret was empty could forge). Production has the var set —
+     the admin flow works live — so this only ever fires on a
+     misconfigured deploy. */
+  if (!ADMIN_TOKEN_SECRET) throw new Error("ADMIN_TOKEN_SECRET is not set — admin sign-in is unavailable.");
   return createHmac("sha256", ADMIN_TOKEN_SECRET).update(payload).digest("base64url");
 }
 
@@ -24,6 +30,7 @@ export function issueAdminToken(): string {
 }
 
 export function isValidAdminToken(token: string): boolean {
+  if (!ADMIN_TOKEN_SECRET) return false;
   const dot = token.indexOf(".");
   if (dot <= 0) return false;
   const exp = Number(token.slice(0, dot));
@@ -36,16 +43,30 @@ export function isValidAdminToken(token: string): boolean {
 
 export function requireAdmin(token: string): void {
   if (!isValidAdminToken(token)) {
-    throw new Error(
-      "Admin session missing or expired — type the admin code in the site search box to open the panel again, then retry.",
+    /* 400 with a helpful message (not a generic 500): the client
+       shows this text and offers the code-input recovery view. */
+    throw Object.assign(
+      new Error(
+        "Admin session missing or expired — type the admin code in the site search box to open the panel again, then retry.",
+      ),
+      { status: 400 },
     );
   }
 }
 
 /** Normalises typed text the same way the Muse version did and checks it
-    against the server-held code. An unset ADMIN_CODE never matches. */
+    against the server-held code. An unset ADMIN_CODE never matches.
+    A17: the stored code is normalised the same way as the input, and
+    the comparison is constant-time (timingSafeEqual) so a correct
+    guess cannot be distinguished from a wrong one by timing. */
 export function checkAdminCode(code: string): boolean {
-  if (!ADMIN_CODE) return false;
-  const normalized = code.trim().toLowerCase().replace(/^#+\/?/, "").replace(/\/$/, "");
-  return normalized !== "" && normalized === ADMIN_CODE;
+  const normalize = (s: string) => s.trim().toLowerCase().replace(/^#+\/?/, "").replace(/\/$/, "");
+  const stored = normalize(ADMIN_CODE);
+  if (!stored) return false;
+  const given = normalize(code);
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(stored);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

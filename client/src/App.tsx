@@ -1,103 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import {
-  buildEffective, buildRobotsTxt, buildSitemapXml, dateFromDays, DEFAULT_ADMIN_STATE,
-  DEFAULT_BUTTONS, DEFAULT_SEO, DEFAULT_TEXTS,
-  emptyAdminVideo, extractEmbedSrc, fmtDur, fmtViews, isVideoFileUrl, isoDateFromDays,
-  isoDuration, parseAdminState, parseDateValue, parseDuration, parseViews, publicUrl,
-  resolveEmbed, slugify, videoToAdmin, VIDEOS, CATEGORIES, CREATORS, CHANNELS, TAGS,
+  buildEffective, buildRobotsTxt, buildSitemapXml, fmtDur, fmtViews, isVideoFileUrl,
+  isoDateFromDays, isoDuration, parseAdminState, publicUrl, resolveEmbed, slugify,
 } from "../../lib/catalog";
-import type { AdminState, AdminVideo, Video } from "../../lib/catalog";
+import type { AdminState, Video } from "../../lib/catalog";
+
+/* The admin panel is a separate chunk, loaded only when #/panel opens —
+   the public site never downloads it. */
+const AdminPanel = lazy(() => import("./AdminPanel").then((m) => ({ default: m.AdminPanel })));
 
 
-
-/* ---------------- CSV (import / export) ---------------- */
-
-const CSV_COLUMNS = ["title", "embed_url", "description", "duration", "views", "date", "creator", "channel", "category", "tags", "thumbnail", "seo_title", "seo_description"] as const;
-type CsvColumn = (typeof CSV_COLUMNS)[number];
-type CsvRow = Record<CsvColumn, string | null>;
-
-function parseCsv(text: string): string[][] {
-  const s = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i] as string;
-    if (quoted) {
-      if (c === '"') {
-        if (s[i + 1] === '"') { cell += '"'; i++; } else quoted = false;
-      } else cell += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") { row.push(cell); cell = ""; }
-    else if (c === "\n") { row.push(cell); cell = ""; rows.push(row); row = []; }
-    else cell += c;
-  }
-  row.push(cell);
-  rows.push(row);
-  return rows.filter((r) => !(r.length === 1 && (r[0] ?? "").trim() === ""));
-}
-
-/* Maps parsed CSV to column records. The user's rule: an empty cell is
-   stored as null — never an error, never a skipped row, never an
-   invented value. Missing columns are null for every row. */
-function csvToRows(text: string): CsvRow[] {
-  const grid = parseCsv(text);
-  if (grid.length === 0) return [];
-  const header = (grid[0] ?? []).map((h) => h.trim().toLowerCase());
-  const known = CSV_COLUMNS as readonly string[];
-  const hasHeader = header.some((h) => known.includes(h));
-  const idx = new Map<string, number>();
-  if (hasHeader) header.forEach((h, i) => { if (known.includes(h) && !idx.has(h)) idx.set(h, i); });
-  const dataRows = hasHeader ? grid.slice(1) : grid;
-  return dataRows.map((r) => {
-    const out = {} as CsvRow;
-    for (const col of CSV_COLUMNS) {
-      const i = hasHeader ? idx.get(col) : CSV_COLUMNS.indexOf(col);
-      const raw = i != null ? (r[i] ?? "") : "";
-      const v = raw.trim();
-      out[col] = v === "" ? null : v;
-    }
-    return out;
-  });
-}
-
-function csvRowToAdmin(r: CsvRow, id: string): AdminVideo {
-  const date = r.date ? parseDateValue(r.date) : null;
-  return {
-    id,
-    title: r.title,
-    description: r.description,
-    embedUrl: r.embed_url ? extractEmbedSrc(r.embed_url) : null,
-    durationSec: r.duration ? parseDuration(r.duration) : null,
-    views: r.views ? parseViews(r.views) : null,
-    days: date?.days ?? null,
-    dateStr: date?.dateStr ?? null,
-    creator: r.creator,
-    channel: r.channel,
-    category: r.category,
-    tags: r.tags ? r.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean) : [],
-    thumbnailUrl: r.thumbnail,
-    seoTitle: r.seo_title,
-    seoDescription: r.seo_description,
-    featured: false,
-    badgeNew: false,
-    rating: null,
-    hd: true,
-  };
-}
-
-function csvEscape(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-const CSV_TEMPLATE = [
-  CSV_COLUMNS.join(","),
-  'Sample video title,https://example.com/embed/sample-video,A short sample description,12:34,1500,2026-11-20,Sample Creator,Sample Channel,Travel,"travel, guide",https://example.com/thumb.jpg,Sample SEO title,Sample SEO description',
-  "Title only plus embed,https://example.com/embed/second,,,,,,,,,,,",
-].join("\n");
 
 const FEED_TABS = ["For you", "Trending", "New", "Top rated", "Longest"] as const;
 const LETTERS = ["Popular", "0-9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"];
@@ -163,7 +77,7 @@ const FILLED: Record<string, string> = {
   cat: "M12 3.4c1.9 0 3 .7 3.7 1.5 1.2-.5 2.6-1.2 4-1.5-.2 1.7-.9 3.2-1.9 4.4.6 1.2 1 2.6 1 4.2a7.3 7.3 0 1 1-14.6 0c0-1.6.4-3 1-4.2C4.2 6.6 3.5 5.1 3.3 3.4c1.4.3 2.8 1 4 1.5.7-.8 1.8-1.5 3.7-1.5Z",
 };
 
-function Icon({ n, size = 22, className = "", tone = "default" }: { n: string; size?: number; className?: string; tone?: "default" | "accent" | "gold" }) {
+export function Icon({ n, size = 22, className = "", tone = "default" }: { n: string; size?: number; className?: string; tone?: "default" | "accent" | "gold" }) {
   const glow = tone === "accent" ? "drop-shadow-[0_0_7px_rgba(244,63,94,.55)]" : tone === "gold" ? "drop-shadow-[0_0_7px_rgba(245,158,11,.5)]" : "";
   const f = FILLED[n];
   if (f) {
@@ -311,7 +225,7 @@ function Motif({ v, big }: { v: Video; big?: boolean }) {
   );
 }
 
-function Thumb({ v, rank, wide, badge }: { v: Video; rank?: number; wide?: boolean; badge?: string }) {
+export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: number; wide?: boolean; badge?: string; priority?: boolean }) {
   /* Until the photo arrives, the tile's placeholder is ONLY a plain
      white background with the site logo centered on it — no tile art,
      no gradient, no motif behind the name (the owner asked for the
@@ -337,7 +251,7 @@ function Thumb({ v, rank, wide, badge }: { v: Video; rank?: number; wide?: boole
            would error and leave the placeholder up forever. */
         <video referrerPolicy="no-referrer" src={v.thumbnailUrl} muted loop autoPlay playsInline preload="metadata" onLoadedData={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
       ) : (
-        <img src={v.thumbnailUrl} alt="" loading="lazy" onLoad={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
+        <img src={v.thumbnailUrl} alt="" loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={() => setImgState("err")} className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
       {badge && <span className="absolute left-2 top-2 rounded-md bg-[var(--accent)] px-2 py-0.5 text-[11px] font-black tracking-wide text-white shadow">{badge}</span>}
@@ -347,12 +261,12 @@ function Thumb({ v, rank, wide, badge }: { v: Video; rank?: number; wide?: boole
   );
 }
 
-function VideoCard({ v, onOpen, wide, rank, badge, hideMeta }: { v: Video; onOpen: (v: Video) => void; wide?: boolean; rank?: number; badge?: string; hideMeta?: boolean }) {
+function VideoCard({ v, onOpen, wide, rank, badge, hideMeta, priority }: { v: Video; onOpen: (v: Video) => void; wide?: boolean; rank?: number; badge?: string; hideMeta?: boolean; priority?: boolean }) {
   const cardBadge = badge ?? (v.featured ? "FEATURED" : v.badgeNew ? "NEW" : undefined);
   const meta = [v.hasViews ? `${fmtViews(v.views)} views` : null, v.hasDate ? v.age : null, v.hasRating ? `${v.rating}% liked` : null].filter(Boolean).join(" · ");
   return (
     <button type="button" onClick={() => onOpen(v)} className="group block w-full text-left transition duration-150 active:scale-[0.97] active:opacity-75" aria-label={`Watch: ${v.title}`}>
-      <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} />
+      <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} priority={priority} />
       <span className={`mt-2 line-clamp-2 block text-[13px] font-semibold leading-[1.35] text-white sm:text-sm ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : ""}`}>{v.title}</span>
       {!hideMeta && meta && <span className={`mt-0.5 block text-xs text-[var(--dim)] sm:text-[13px] ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : ""}`}>{meta}</span>}
     </button>
@@ -584,6 +498,7 @@ function useTapSeek(onSeek: (seconds: number) => void, onToggle: () => void) {
       return;
     }
     lastTap.current = { t: now, side };
+    window.clearTimeout(pending.current);
     pending.current = window.setTimeout(() => { toggleRef.current(); }, 300);
   };
   return { handleTap, flash };
@@ -674,6 +589,9 @@ function EmbedPlayer({ v }: { v: Video }) {
   const [pinned, setPinned] = useState<{ url: string; label: string; hls: boolean; nonce: number } | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [retries, setRetries] = useState(0);
+  /* Fatal HLS network errors retry the load in place, at most twice —
+     the old code retried forever and never reached the fallback. */
+  const hlsNetRetries = useRef(0);
   /* Custom control-bar state for the native player. The video element
      no longer uses the browser's built-in controls: their fullscreen
      button (bottom-right of the bar, next to the volume icon — the one
@@ -726,6 +644,10 @@ function EmbedPlayer({ v }: { v: Video }) {
   useEffect(() => {
     setLoaded(false); setFileFailed(false); setSelLabel(null);
     setPinned(null); setRetryNonce(0); setRetries(0); resumeRef.current = null;
+    hlsNetRetries.current = 0;
+    /* A18: leaving a video always leaves in-page expanded fullscreen,
+       so the next video never starts with the player covering it. */
+    collapseFullscreen();
     setPlaying(false); setCurTime(0); setDuration(0);
     setStarted(false); setWaiting(true); setQMenuOpen(false);
     setSpeed(1); setSpeedMenuOpen(false); setPipActive(false); setTheater(false);
@@ -741,7 +663,7 @@ function EmbedPlayer({ v }: { v: Video }) {
      not). There is deliberately no floating overlay button: the
      control bar's button is the only fullscreen control. */
   const boxRef = useRef<HTMLDivElement | null>(null);
-  const { big: isFs, expanded, rotated, toggle: toggleFullscreen } = usePlayerFullscreen(boxRef, videoRef);
+  const { big: isFs, expanded, rotated, toggle: toggleFullscreen, collapse: collapseFullscreen } = usePlayerFullscreen(boxRef, videoRef);
   /* Controls auto-hide: bar fades ~3s after the last activity while
      playing, never while paused or while the quality/speed menu is open. */
   const hide = useAutoHideControls(playing, qMenuOpen || speedMenuOpen);
@@ -786,7 +708,10 @@ function EmbedPlayer({ v }: { v: Video }) {
     if (list.length === 0) return;
     const chosen = list.find((s) => s.label === selLabel) ?? list.find((s) => s.url === d.fileUrl) ?? list[0];
     if (!chosen) return;
-    if (!pinned || pinned.label !== chosen.label || (pinned.nonce !== retryNonce && chosen.url !== pinned.url)) {
+    /* Adopt the pin when the retry nonce changed even if the URL is
+       identical (a re-resolve mints a fresh signed URL for the same
+       file): the resume position is preserved via resumeRef. */
+    if (!pinned || pinned.label !== chosen.label || pinned.nonce !== retryNonce) {
       const el = videoRef.current;
       if (el && pinned) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
       setPinned({ url: chosen.url, label: chosen.label, hls: chosen.hls, nonce: retryNonce });
@@ -840,10 +765,13 @@ function EmbedPlayer({ v }: { v: Video }) {
       hls.attachMedia(videoRef.current);
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { hls?.startLoad(); return; }
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          if (hlsNetRetries.current < 2) { hlsNetRetries.current += 1; hls?.startLoad(); return; }
+        }
         onVideoError();
       });
-    }).catch(() => { /* hls.js failed to load — element error path still applies */ });
+    }).catch(() => onVideoError());
+    hlsNetRetries.current = 0;
     return () => { cancelled = true; if (hls) hls.destroy(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinned?.url, pinned?.hls, nativeHls]);
@@ -1009,7 +937,7 @@ function EmbedPlayer({ v }: { v: Video }) {
       <div ref={boxRef} onMouseMove={(e) => { hide.poke(); lastPointer.current = { x: e.clientX, y: e.clientY }; updateSeekHover(e.clientX, e.clientY); }} onTouchStart={hide.poke} className={`pv-darkzone pv-fs relative overflow-hidden bg-black ${expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full" : theater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={expanded ? (rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)" } : undefined) : theater ? { aspectRatio: "16/9", width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9" }}>
         {nativeSrc ? (
           <>
-            <video key={nativeSrc} ref={videoRef} referrerPolicy="no-referrer" src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={(e) => tap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onProgress={updateBuffered} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); updateBuffered(); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
+            <video key={`${nativeSrc}:${pinned?.nonce ?? 0}`} ref={videoRef} referrerPolicy="no-referrer" src={useHlsJs ? undefined : nativeSrc} playsInline preload="auto" poster={posterUrl} onClick={(e) => tap.handleTap(e.clientX, e.currentTarget.getBoundingClientRect())} onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => { setPlaying(false); setWaiting(false); }} onEnded={() => { setPlaying(false); setWaiting(false); }} onWaiting={() => setWaiting(true)} onPlaying={() => { setPlaying(true); setWaiting(false); }} onCanPlay={() => { const el = videoRef.current; if (el && !el.paused) setWaiting(false); }} onProgress={updateBuffered} onTimeUpdate={() => { const el = videoRef.current; if (el) setCurTime(el.currentTime || 0); updateBuffered(); }} onDurationChange={() => { const el = videoRef.current; if (el && Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration); }} onError={onVideoError} onLoadedMetadata={onLoadedMetadata} className="absolute inset-0 h-full w-full" aria-label={v.title} />
             {showSpinner && <PlayerSpinner />}
             <SeekFlash flash={tap.flash} />
             {!playing && (
@@ -1176,747 +1104,6 @@ function NextButton({ onClick, disabled, label = "Next" }: { onClick: () => void
   );
 }
 
-/* ---------------- Admin panel helpers ---------------- */
-
-function downloadTextFile(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
-function AInput({ label, value, onChange, placeholder, type = "text", list }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string }) {
-  return (
-    <label className="block text-sm font-semibold text-zinc-200">{label}
-      <input type={type} value={value} placeholder={placeholder} list={list} onChange={(e) => onChange(e.target.value)} className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-[var(--accent)] focus:outline-none" />
-    </label>
-  );
-}
-
-function ATextarea({ label, value, onChange, placeholder, rows = 3 }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; rows?: number }) {
-  return (
-    <label className="block text-sm font-semibold text-zinc-200">{label}
-      <textarea value={value} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-[var(--accent)] focus:outline-none" />
-    </label>
-  );
-}
-
-function ACheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2.5 text-sm font-semibold text-zinc-200">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" /> {label}
-    </label>
-  );
-}
-
-const TEXT_FIELDS: { key: string; label: string }[] = [
-  { key: "siteName", label: "Site name" },
-  { key: "logoText", label: "Logo text" },
-  { key: "homeH1", label: "Homepage H1" },
-  { key: "secTrending", label: "Section title — Trending" },
-  { key: "secLatest", label: "Section title — Latest" },
-  { key: "secModels", label: "Section title — Popular models" },
-  { key: "secChannels", label: "Section title — Channels" },
-  { key: "secBecause", label: "Section title — “Because you watch” prefix" },
-  { key: "secTopRated", label: "Section title — Top rated" },
-  { key: "searchPlaceholder", label: "Search box placeholder" },
-  { key: "footerText", label: "Footer text" },
-  { key: "cookieText", label: "Cookie banner text" },
-];
-
-const ADMIN_SECTIONS = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "texts", label: "Site Text" },
-  { id: "buttons", label: "Buttons" },
-  { id: "seo", label: "SEO" },
-  { id: "videos", label: "Videos" },
-  { id: "taxonomy", label: "Categories / Models / Channels / Tags" },
-  { id: "csv", label: "CSV Import" },
-] as const;
-type AdminSection = (typeof ADMIN_SECTIONS)[number]["id"];
-type TaxTab = "categories" | "models" | "channels" | "tags";
-
-/* The admin panel. Opens only after the admin code typed into the
-   site search box is verified by the server (verifyAdminCode) —
-   nothing on the public site links here, and the code is not in
-   this bundle.
-   All edits live in one AdminState working copy: text,
-   button and SEO sections persist with their Save buttons; video,
-   taxonomy and CSV changes save immediately through onSave. */
-function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flash, theme, onToggleTheme }: {
-  initial: AdminState;
-  onSave: (st: AdminState) => void;
-  onReset: () => void;
-  onExit: () => void;
-  onOpenVideo: (v: Video) => void;
-  flash: (msg: string) => void;
-  theme: "dark" | "light";
-  onToggleTheme: () => void;
-}) {
-  const [st, setSt] = useState<AdminState>(() => JSON.parse(JSON.stringify(initial)) as AdminState);
-  const [section, setSection] = useState<AdminSection>("dashboard");
-  const eff = useMemo(() => buildEffective(st), [st]);
-  const commit = (next: AdminState) => { setSt(next); onSave(next); };
-
-  /* Videos section state */
-  const [vSearch, setVSearch] = useState("");
-  const [vCat, setVCat] = useState("All");
-  const [vShow, setVShow] = useState(40);
-  const [form, setForm] = useState<AdminVideo | null>(null);
-  const [durText, setDurText] = useState("");
-  const [tagsText, setTagsText] = useState("");
-  const [formError, setFormError] = useState("");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-
-  /* Taxonomy section state */
-  const [taxTab, setTaxTab] = useState<TaxTab>("categories");
-  const [newName, setNewName] = useState("");
-  const [newCreator, setNewCreator] = useState("");
-  const [renameOf, setRenameOf] = useState<string | null>(null);
-  const [renameText, setRenameText] = useState("");
-  const [confirmTaxDelete, setConfirmTaxDelete] = useState<string | null>(null);
-  const [taxSelected, setTaxSelected] = useState<string[]>([]);
-  const [confirmTaxBulkDelete, setConfirmTaxBulkDelete] = useState(false);
-
-  /* CSV section state */
-  const [csvText, setCsvText] = useState("");
-  const [dragOver, setDragOver] = useState(false);
-  const [report, setReport] = useState<{ added: number; skipped: { row: number; reason: string }[]; nullFields: { row: number; title: string; fields: string[] }[] } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const csvRows = useMemo(() => (csvText.trim() ? csvToRows(csvText) : null), [csvText]);
-
-  const [confirmReset, setConfirmReset] = useState(false);
-
-  const filteredVideos = eff.videos.filter((v) => (vCat === "All" || v.category === vCat) && (!vSearch.trim() || v.title.toLowerCase().includes(vSearch.trim().toLowerCase()) || v.creator.toLowerCase().includes(vSearch.trim().toLowerCase())));
-  const recent = [...eff.videos].sort((a, b) => a.days - b.days).slice(0, 6);
-
-  const openAdd = () => { setForm(emptyAdminVideo(`a${Date.now().toString(36)}`)); setDurText(""); setTagsText(""); setFormError(""); };
-  const openEdit = (v: Video) => { const av = videoToAdmin(v); setForm(av); setDurText(av.durationSec != null ? fmtDur(av.durationSec) : ""); setTagsText(av.tags.join(", ")); setFormError(""); };
-  const saveForm = () => {
-    if (!form) return;
-    const clean = (s: string | null) => (s?.trim() ? s.trim() : null);
-    const rec: AdminVideo = {
-      ...form,
-      title: clean(form.title),
-      embedUrl: form.embedUrl?.trim() ? extractEmbedSrc(form.embedUrl) : null,
-      description: form.description?.trim() ? form.description : null,
-      creator: clean(form.creator),
-      channel: clean(form.channel),
-      category: clean(form.category),
-      thumbnailUrl: clean(form.thumbnailUrl),
-      seoTitle: clean(form.seoTitle),
-      seoDescription: clean(form.seoDescription),
-      durationSec: parseDuration(durText),
-      tags: tagsText.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean),
-    };
-    if (!rec.title && !rec.embedUrl) { setFormError("Give the video at least a title or an embed link — a video with neither cannot be added."); return; }
-    if (st.addedVideos.some((v) => v.id === rec.id)) commit({ ...st, addedVideos: st.addedVideos.map((v) => (v.id === rec.id ? rec : v)) });
-    else if (VIDEOS.some((v) => v.id === rec.id)) commit({ ...st, overrides: { ...st.overrides, [rec.id]: rec } });
-    else commit({ ...st, addedVideos: [rec, ...st.addedVideos] });
-    setForm(null);
-    flash("Video saved — it is live on the site now");
-  };
-  const deleteVideo = (v: Video) => {
-    if (st.addedVideos.some((a) => a.id === v.id)) commit({ ...st, addedVideos: st.addedVideos.filter((a) => a.id !== v.id) });
-    else {
-      const overrides = { ...st.overrides };
-      delete overrides[v.id];
-      commit({ ...st, overrides, deletedIds: [...st.deletedIds, v.id] });
-    }
-    setConfirmDeleteId(null);
-    setSelectedIds((prev) => prev.filter((id) => id !== v.id));
-    flash("Video deleted");
-  };
-
-  /* Bulk delete: tick videos in the list (or Select all matching), then
-     delete them all in one commit — added videos are dropped, built-in
-     catalog videos go through deletedIds, and their overrides go too. */
-  const toggleSelect = (id: string) => {
-    setConfirmBulkDelete(false);
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-  const allFilteredSelected = filteredVideos.length > 0 && filteredVideos.every((v) => selectedIds.includes(v.id));
-  const toggleSelectAll = () => {
-    setConfirmBulkDelete(false);
-    setSelectedIds((prev) => allFilteredSelected
-      ? prev.filter((id) => !filteredVideos.some((v) => v.id === id))
-      : Array.from(new Set([...prev, ...filteredVideos.map((v) => v.id)])));
-  };
-  const deleteSelected = () => {
-    const ids = new Set(selectedIds);
-    if (ids.size === 0) return;
-    const overrides = { ...st.overrides };
-    for (const id of ids) delete overrides[id];
-    commit({
-      ...st,
-      addedVideos: st.addedVideos.filter((a) => !ids.has(a.id)),
-      overrides,
-      deletedIds: [...st.deletedIds, ...[...ids].filter((id) => VIDEOS.some((v) => v.id === id) && !st.deletedIds.includes(id))],
-    });
-    setSelectedIds([]);
-    setConfirmBulkDelete(false);
-    flash(`${ids.size} video${ids.size === 1 ? "" : "s"} deleted`);
-  };
-
-  const baseNames = (tab: TaxTab): string[] => tab === "categories" ? CATEGORIES.map((c) => c.name) : tab === "models" ? CREATORS.map((c) => c.name) : tab === "channels" ? CHANNELS.map((c) => c.name) : TAGS.map((t) => t.name);
-  const taxList = (tab: TaxTab): { name: string; count: string }[] =>
-    tab === "categories" ? eff.categories.map((c) => ({ name: c.name, count: c.count }))
-    : tab === "models" ? eff.creators.map((c) => ({ name: c.name, count: String(c.videos) }))
-    : tab === "channels" ? eff.channels.map((c) => ({ name: c.name, count: c.videos }))
-    : eff.tags.map((t) => ({ name: t.name, count: String(t.count) }));
-  const taxAdd = (tab: TaxTab, name: string, creator?: string) => {
-    const n = name.trim();
-    if (!n) return;
-    if (tab === "channels") { commit({ ...st, taxonomy: { ...st.taxonomy, channelsAdded: [...st.taxonomy.channelsAdded, { name: n, creator: (creator ?? "").trim() }] } }); return; }
-    const op = st.taxonomy[tab];
-    if (op.deleted.includes(n)) commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, deleted: op.deleted.filter((d) => d !== n) } } });
-    else if (!op.added.includes(n) && !baseNames(tab).includes(n)) commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, added: [...op.added, n] } } });
-  };
-  const taxRename = (tab: TaxTab, oldName: string, newName: string) => {
-    const n = newName.trim();
-    if (!n || n === oldName) return;
-    if (tab === "channels" && st.taxonomy.channelsAdded.some((c) => c.name === oldName)) {
-      commit({ ...st, taxonomy: { ...st.taxonomy, channelsAdded: st.taxonomy.channelsAdded.map((c) => (c.name === oldName ? { ...c, name: n } : c)) } });
-      return;
-    }
-    const op = st.taxonomy[tab];
-    if (op.added.includes(oldName)) { commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, added: op.added.map((a) => (a === oldName ? n : a)) } } }); return; }
-    const renamed = { ...op.renamed };
-    const key = Object.keys(renamed).find((k) => renamed[k] === oldName) ?? oldName;
-    renamed[key] = n;
-    commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, renamed } } });
-  };
-  /* Pure form of a single taxonomy delete, so the bulk delete can fold
-     many names through it and commit once. */
-  const taxDeleteFrom = (s: AdminState, tab: TaxTab, name: string): AdminState => {
-    if (tab === "channels" && s.taxonomy.channelsAdded.some((c) => c.name === name)) {
-      return { ...s, taxonomy: { ...s.taxonomy, channelsAdded: s.taxonomy.channelsAdded.filter((c) => c.name !== name) } };
-    }
-    const op = s.taxonomy[tab];
-    if (op.added.includes(name)) return { ...s, taxonomy: { ...s.taxonomy, [tab]: { ...op, added: op.added.filter((a) => a !== name) } } };
-    const renamed = { ...op.renamed };
-    const key = Object.keys(renamed).find((k) => renamed[k] === name) ?? name;
-    delete renamed[key];
-    return { ...s, taxonomy: { ...s.taxonomy, [tab]: { ...op, renamed, deleted: [...op.deleted, key] } } };
-  };
-  const taxDelete = (tab: TaxTab, name: string) => commit(taxDeleteFrom(st, tab, name));
-
-  /* Bulk select/delete for the taxonomy lists — same pattern as the
-     Videos list: tick items (or Select all), then delete in one commit. */
-  const taxItems = taxList(taxTab);
-  const taxSingular = taxTab === "categories" ? "category" : taxTab === "models" ? "model" : taxTab === "channels" ? "channel" : "tag";
-  const allTaxSelected = taxItems.length > 0 && taxItems.every((i) => taxSelected.includes(i.name));
-  const toggleTaxSelect = (name: string) => {
-    setConfirmTaxBulkDelete(false);
-    setTaxSelected((prev) => (prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]));
-  };
-  const toggleTaxSelectAll = () => {
-    setConfirmTaxBulkDelete(false);
-    setTaxSelected((prev) => allTaxSelected
-      ? prev.filter((n) => !taxItems.some((i) => i.name === n))
-      : Array.from(new Set([...prev, ...taxItems.map((i) => i.name)])));
-  };
-  const deleteTaxSelected = () => {
-    if (taxSelected.length === 0) return;
-    let next = st;
-    for (const name of taxSelected) next = taxDeleteFrom(next, taxTab, name);
-    const n = taxSelected.length;
-    commit(next);
-    setTaxSelected([]);
-    setConfirmTaxBulkDelete(false);
-    setConfirmTaxDelete(null);
-    flash(`${n} ${n === 1 ? taxSingular : taxSingular === "category" ? "categories" : `${taxSingular}s`} deleted`);
-  };
-
-  const readFile = (f: File) => {
-    const r = new FileReader();
-    r.onload = () => { setCsvText(String(r.result ?? "")); setReport(null); };
-    r.readAsText(f);
-  };
-  const doImport = () => {
-    if (!csvRows) return;
-    const existing = new Set(eff.videos.map((v) => v.embedUrl?.trim()).filter(Boolean) as string[]);
-    const addedRecs: AdminVideo[] = [];
-    const skipped: { row: number; reason: string }[] = [];
-    const nullFields: { row: number; title: string; fields: string[] }[] = [];
-    csvRows.forEach((r, i) => {
-      const rowNo = i + 1;
-      if (!r.title && !r.embed_url) { skipped.push({ row: rowNo, reason: "No title and no embed_url — nothing to import." }); return; }
-      if (r.embed_url) {
-        const src = extractEmbedSrc(r.embed_url);
-        if (existing.has(src)) { skipped.push({ row: rowNo, reason: `Duplicate embed_url — already on the site: ${src}` }); return; }
-        existing.add(src);
-      }
-      addedRecs.push(csvRowToAdmin(r, `a${Date.now().toString(36)}x${i}`));
-      nullFields.push({ row: rowNo, title: r.title ?? "Untitled video", fields: CSV_COLUMNS.filter((c) => r[c] === null) });
-    });
-    if (addedRecs.length) commit({ ...st, addedVideos: [...addedRecs, ...st.addedVideos] });
-    setReport({ added: addedRecs.length, skipped, nullFields });
-  };
-  const doExport = () => {
-    const lines = [CSV_COLUMNS.join(",")];
-    for (const v of eff.videos) {
-      const row: Record<CsvColumn, string> = {
-        title: v.title,
-        embed_url: v.embedUrl ?? "",
-        description: v.custom ? (v.description ?? "") : "",
-        duration: v.duration,
-        views: v.hasViews ? String(v.views) : "",
-        date: v.hasDate ? dateFromDays(v.days) : "",
-        creator: v.creator,
-        channel: v.channel ?? "",
-        category: v.category,
-        tags: v.tags.join(", "),
-        thumbnail: v.thumbnailUrl ?? "",
-        seo_title: v.seoTitle ?? "",
-        seo_description: v.seoDescription ?? "",
-      };
-      lines.push(CSV_COLUMNS.map((c) => csvEscape(row[c])).join(","));
-    }
-    downloadTextFile("videos-export.csv", lines.join("\n"));
-    flash("CSV export downloaded");
-  };
-
-  const doResetAll = () => {
-    setSt(JSON.parse(JSON.stringify(DEFAULT_ADMIN_STATE)) as AdminState);
-    setForm(null);
-    setCsvText("");
-    setReport(null);
-    setConfirmReset(false);
-    onReset();
-  };
-
-  const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-[var(--accent)] focus:outline-none";
-
-  return (
-    <div className="mx-auto max-w-6xl px-4 pb-24 pt-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-display text-xl font-black text-white sm:text-2xl">Admin Panel</h1>
-          <p className="mt-0.5 text-[13px] text-[var(--dim)]">Manage {st.texts.siteName || "the site"} — texts, buttons, SEO, videos and CSV imports.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-pressed={theme === "light"} onClick={onToggleTheme} className="p-2 text-white transition active:scale-90"><Icon n={theme === "dark" ? "sun" : "moon"} size={21} tone="accent" /></button>
-          <button type="button" onClick={onExit} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">View site</button>
-        </div>
-      </div>
-      <p className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-[13px] leading-relaxed text-amber-200">
-        This panel is not linked anywhere on the public site. It opens only after the admin code typed into the site's search box is verified on the server, and every save is checked against that verification before it is stored. Keep the code private — anyone who knows it can open this panel.
-      </p>
-
-      <div className="mt-5 flex flex-col gap-5 sm:flex-row">
-        <nav className="no-scrollbar flex shrink-0 gap-2 overflow-x-auto sm:w-56 sm:flex-col sm:overflow-visible" aria-label="Admin sections">
-          {ADMIN_SECTIONS.map((s) => (
-            <button key={s.id} type="button" aria-current={section === s.id ? "page" : undefined} onClick={() => setSection(s.id)} className={`whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm font-bold transition active:scale-[0.98] sm:whitespace-normal ${section === s.id ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-zinc-200"}`}>{s.label}</button>
-          ))}
-        </nav>
-
-        <div className="min-w-0 flex-1">
-          {section === "dashboard" && (
-            <section aria-label="Dashboard">
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                {[
-                  { label: "Videos", value: eff.videos.length },
-                  { label: "Models", value: eff.creators.length },
-                  { label: "Channels", value: eff.channels.length },
-                  { label: "Categories", value: eff.categories.length },
-                  { label: "Tags", value: eff.tags.length },
-                ].map((s) => (
-                  <div key={s.label} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <p className="font-display text-2xl font-black text-white">{s.value}</p>
-                    <p className="mt-0.5 text-[13px] text-[var(--dim)]">{s.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <button type="button" onClick={() => { setSection("videos"); openAdd(); }} className="rounded-full bg-[var(--accent)] px-6 py-3 font-display text-sm font-black text-white transition active:scale-95">+ Add a video</button>
-                <button type="button" onClick={() => setSection("csv")} className="rounded-full border border-[var(--border)] px-6 py-3 font-display text-sm font-black text-white transition active:scale-95">Import CSV</button>
-                <button type="button" onClick={() => setSection("videos")} className="rounded-full border border-[var(--border)] px-6 py-3 font-display text-sm font-black text-white transition active:scale-95">Manage videos</button>
-              </div>
-              <h2 className="font-display mt-7 text-lg font-extrabold text-white">Recent videos</h2>
-              <div className="mt-3 space-y-2.5">
-                {recent.map((v) => (
-                  <div key={v.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
-                    <div className="w-28 shrink-0 sm:w-36"><Thumb v={v} /></div>
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-1 text-sm font-bold text-white">{v.title}</p>
-                      <p className="mt-0.5 text-xs text-[var(--dim)]">{v.category}{v.creator ? ` · ${v.creator}` : ""} · {v.hasDate ? v.age : "no date"}</p>
-                      <p className={`mt-0.5 text-xs font-semibold ${v.embedUrl ? "text-emerald-400" : "text-amber-400"}`}>{v.embedUrl ? "Embed source set" : "No video source — art player shows"}</p>
-                    </div>
-                    <button type="button" onClick={() => { setSection("videos"); openEdit(v); }} className="shrink-0 rounded-full bg-[var(--surface2)] px-4 py-2 text-sm font-bold text-white transition active:scale-95">Edit</button>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-9 rounded-2xl border border-red-500/30 bg-red-500/5 p-4">
-                <h2 className="font-display text-base font-extrabold text-white">Reset all admin changes</h2>
-                <p className="mt-1 text-sm text-[var(--dim)]">Restores every text, button, SEO field, video and taxonomy change back to the site's built-in defaults. Videos you added or imported are removed; the original catalog comes back untouched.</p>
-                {confirmReset ? (
-                  <div className="mt-3 flex flex-wrap gap-2.5">
-                    <button type="button" onClick={doResetAll} className="rounded-full bg-red-600 px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Yes, reset everything</button>
-                    <button type="button" onClick={() => setConfirmReset(false)} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Cancel</button>
-                  </div>
-                ) : (
-                  <button type="button" onClick={() => setConfirmReset(true)} className="mt-3 rounded-full border border-red-500 px-5 py-2.5 text-sm font-bold text-red-400 transition active:scale-95">Reset all admin changes</button>
-                )}
-              </div>
-            </section>
-          )}
-
-          {section === "texts" && (
-            <section aria-label="Site text">
-              <h2 className="font-display text-lg font-extrabold text-white">Site Text</h2>
-              <p className="mt-1 text-sm text-[var(--dim)]">These texts appear on the public site. Save and they change everywhere immediately.</p>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {TEXT_FIELDS.map((f) => (
-                  f.key === "footerText" || f.key === "cookieText" ? (
-                    <div key={f.key} className="sm:col-span-2"><ATextarea label={f.label} value={st.texts[f.key] ?? ""} onChange={(v) => setSt({ ...st, texts: { ...st.texts, [f.key]: v } })} rows={2} /></div>
-                  ) : (
-                    <AInput key={f.key} label={f.label} value={st.texts[f.key] ?? ""} onChange={(v) => setSt({ ...st, texts: { ...st.texts, [f.key]: v } })} />
-                  )
-                ))}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button type="button" onClick={() => { onSave(st); flash("Site texts saved"); }} className="rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Save texts</button>
-                <button type="button" onClick={() => { const next = { ...st, texts: { ...DEFAULT_TEXTS } }; setSt(next); onSave(next); flash("Texts reset to defaults"); }} className="rounded-full border border-[var(--border)] px-6 py-3 text-sm font-bold text-white transition active:scale-95">Reset to default</button>
-              </div>
-            </section>
-          )}
-
-          {section === "buttons" && (
-            <section aria-label="Buttons">
-              <h2 className="font-display text-lg font-extrabold text-white">Buttons</h2>
-              <p className="mt-1 text-sm text-[var(--dim)]">Edit each button's label and where it goes. A link can be a site route like <span className="text-zinc-200">#/categories</span> or a full https:// address. Leave the link empty to keep the button's normal action.</p>
-              <div className="mt-4 space-y-3">
-                {st.buttons.map((b, i) => (
-                  <div key={b.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <p className="text-sm font-bold text-white">{b.name}</p>
-                    <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
-                      <AInput label="Label" value={b.label} onChange={(v) => setSt({ ...st, buttons: st.buttons.map((x, xi) => (xi === i ? { ...x, label: v } : x)) })} />
-                      <AInput label="Link / route" value={b.link} placeholder="#/categories" onChange={(v) => setSt({ ...st, buttons: st.buttons.map((x, xi) => (xi === i ? { ...x, link: v } : x)) })} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button type="button" onClick={() => { onSave(st); flash("Buttons saved"); }} className="rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Save buttons</button>
-                <button type="button" onClick={() => { const next = { ...st, buttons: DEFAULT_BUTTONS.map((b) => ({ ...b })) }; setSt(next); onSave(next); flash("Buttons reset to defaults"); }} className="rounded-full border border-[var(--border)] px-6 py-3 text-sm font-bold text-white transition active:scale-95">Reset to default</button>
-              </div>
-            </section>
-          )}
-
-          {section === "seo" && (
-            <section aria-label="SEO">
-              <h2 className="font-display text-lg font-extrabold text-white">SEO</h2>
-              <p className="mt-1 text-sm text-[var(--dim)]">Site-wide search settings. Each video can also carry its own SEO title and description — edit those in the video form under Videos.</p>
-              <div className="mt-4 grid gap-4">
-                <AInput label="Site title" value={st.seo.siteTitle} onChange={(v) => setSt({ ...st, seo: { ...st.seo, siteTitle: v } })} />
-                <ATextarea label="Meta description" value={st.seo.metaDescription} onChange={(v) => setSt({ ...st, seo: { ...st.seo, metaDescription: v } })} rows={2} />
-                <AInput label="Meta keywords (comma-separated)" value={st.seo.metaKeywords} onChange={(v) => setSt({ ...st, seo: { ...st.seo, metaKeywords: v } })} />
-                <AInput label="OG title (social share)" value={st.seo.ogTitle} onChange={(v) => setSt({ ...st, seo: { ...st.seo, ogTitle: v } })} />
-                <ATextarea label="OG description (social share)" value={st.seo.ogDescription} onChange={(v) => setSt({ ...st, seo: { ...st.seo, ogDescription: v } })} rows={2} />
-              </div>
-              <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Search result preview">
-                <p className="text-xs font-bold uppercase tracking-wide text-[var(--dim)]">Search result preview</p>
-                <p className="mt-2.5 text-xs text-emerald-500">pulsevideo.example</p>
-                <p className="mt-0.5 text-lg font-semibold leading-snug text-[#8ab4f8]">{st.seo.siteTitle || "—"}</p>
-                <p className="mt-0.5 line-clamp-2 text-sm leading-relaxed text-zinc-300">{st.seo.metaDescription || "—"}</p>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button type="button" onClick={() => { onSave(st); flash("SEO saved — page titles and meta tags updated"); }} className="rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Save SEO</button>
-                <button type="button" onClick={() => { const next = { ...st, seo: { ...DEFAULT_SEO } }; setSt(next); onSave(next); flash("SEO reset to defaults"); }} className="rounded-full border border-[var(--border)] px-6 py-3 text-sm font-bold text-white transition active:scale-95">Reset to default</button>
-              </div>
-              {(() => {
-                const base = window.location.origin && window.location.origin !== "null" ? `${window.location.origin}${window.location.pathname}` : "";
-                const sitemap = buildSitemapXml(base, eff);
-                const robots = buildRobotsTxt(base);
-                const urlCount = 10 + eff.videos.length + eff.categories.length + eff.creators.length + eff.channels.length + eff.tags.length;
-                const dl = (name: string, text: string, type: string) => {
-                  const u = URL.createObjectURL(new Blob([text], { type }));
-                  const a = document.createElement("a");
-                  a.href = u; a.download = name;
-                  document.body.appendChild(a); a.click(); a.remove();
-                  window.setTimeout(() => URL.revokeObjectURL(u), 4000);
-                };
-                return (
-                  <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <p className="text-xs font-bold uppercase tracking-wide text-[var(--dim)]">Sitemap &amp; robots.txt</p>
-                    <p className="mt-2 text-sm leading-relaxed text-zinc-300">Generated live from the current catalog — {urlCount} URLs ({eff.videos.length} videos, {eff.categories.length} categories, {eff.creators.length} models, {eff.channels.length} channels, {eff.tags.length} tags). Add or import a video and it appears in the sitemap automatically. The sitemap lists real path URLs (…/video/…) with no # fragment — crawlers strip everything after a #, so hash URLs would all collapse to the home page — and opening one of those paths in the app resolves to the same page. robots.txt contains no # either (a # there starts a comment, which turned the old Disallow lines into a block of the whole site): it allows everything and points crawlers to the sitemap.</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => dl("sitemap.xml", sitemap, "application/xml")} className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Download sitemap.xml</button>
-                      <button type="button" onClick={() => dl("robots.txt", robots, "text/plain")} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Download robots.txt</button>
-                      <button type="button" onClick={() => { void navigator.clipboard?.writeText(sitemap).then(() => flash("Sitemap XML copied"), () => flash("Copy failed")); }} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Copy sitemap</button>
-                      <button type="button" onClick={() => { window.location.hash = "#/sitemap.xml"; }} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Open sitemap page</button>
-                      <button type="button" onClick={() => { window.location.hash = "#/robots.txt"; }} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Open robots.txt page</button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </section>
-          )}
-
-          {section === "videos" && (
-            <section aria-label="Videos">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="font-display text-lg font-extrabold text-white">Videos <span className="text-[var(--dim)]">({filteredVideos.length})</span></h2>
-                <button type="button" onClick={openAdd} className="rounded-full bg-[var(--accent)] px-5 py-2.5 font-display text-sm font-black text-white transition active:scale-95">+ Add video</button>
-              </div>
-              <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
-                <input aria-label="Search videos" value={vSearch} onChange={(e) => { setVSearch(e.target.value); setVShow(40); setSelectedIds([]); setConfirmBulkDelete(false); }} placeholder="Search title or model…" className={inputCls} />
-                <select aria-label="Filter by category" value={vCat} onChange={(e) => { setVCat(e.target.value); setVShow(40); setSelectedIds([]); setConfirmBulkDelete(false); }} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm font-semibold text-white focus:border-[var(--accent)] focus:outline-none">
-                  <option>All</option>
-                  {eff.categories.map((c) => <option key={c.name}>{c.name}</option>)}
-                </select>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <label className="flex cursor-pointer items-center gap-2 py-1 text-sm font-semibold text-zinc-200">
-                  <input type="checkbox" aria-label="Select all matching videos" checked={allFilteredSelected} onChange={toggleSelectAll} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
-                  Select all matching ({filteredVideos.length})
-                </label>
-                {selectedIds.length > 0 && <span className="text-sm font-semibold text-[var(--accent)]">{selectedIds.length} selected</span>}
-              </div>
-
-              {selectedIds.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3">
-                  <span className="text-sm font-bold text-white">{selectedIds.length} video{selectedIds.length === 1 ? "" : "s"} selected</span>
-                  {confirmBulkDelete ? (
-                    <>
-                      <button type="button" onClick={deleteSelected} className="rounded-full bg-red-600 px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Confirm delete {selectedIds.length} video{selectedIds.length === 1 ? "" : "s"}</button>
-                      <button type="button" onClick={() => setConfirmBulkDelete(false)} className="rounded-full border border-[var(--border)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Keep</button>
-                    </>
-                  ) : (
-                    <button type="button" onClick={() => setConfirmBulkDelete(true)} className="rounded-full bg-red-600 px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Delete selected</button>
-                  )}
-                  <button type="button" onClick={() => { setSelectedIds([]); setConfirmBulkDelete(false); }} className="rounded-full border border-[var(--border)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Clear selection</button>
-                </div>
-              )}
-
-              {form && (
-                <form className="mt-4 rounded-2xl border border-[var(--accent)]/50 bg-[var(--surface)] p-4" onSubmit={(e) => { e.preventDefault(); saveForm(); }}>
-                  <h3 className="font-display text-base font-extrabold text-white">{st.addedVideos.some((v) => v.id === form.id) || !VIDEOS.some((v) => v.id === form.id) ? (st.addedVideos.some((v) => v.id === form.id) ? "Edit video" : "Add video") : "Edit video"}</h3>
-                  <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                    <div className="sm:col-span-2"><AInput label="Title" value={form.title ?? ""} onChange={(v) => setForm({ ...form, title: v })} placeholder="Video title" /></div>
-                    <div className="sm:col-span-2"><ATextarea label="Embed link / embed code (YouTube, Vimeo, .mp4 file, or a full <iframe> embed code)" value={form.embedUrl ?? ""} onChange={(v) => setForm({ ...form, embedUrl: v })} rows={2} placeholder="https://www.youtube.com/watch?v=…" /></div>
-                    <div className="sm:col-span-2"><ATextarea label="Description" value={form.description ?? ""} onChange={(v) => setForm({ ...form, description: v })} rows={3} /></div>
-                    <AInput label="Duration (mm:ss or hh:mm:ss)" value={durText} onChange={setDurText} placeholder="12:34" />
-                    <AInput label="Views" type="number" value={form.views != null ? String(form.views) : ""} onChange={(v) => setForm({ ...form, views: v === "" ? null : Number(v) })} placeholder="0" />
-                    <AInput label="Upload date" type="date" value={form.dateStr ?? ""} onChange={(v) => { const d = v ? parseDateValue(v) : null; setForm({ ...form, dateStr: v || null, days: d?.days ?? null }); }} />
-                    <AInput label="Creator / model" value={form.creator ?? ""} onChange={(v) => setForm({ ...form, creator: v })} list="admin-creators" />
-                    <AInput label="Channel" value={form.channel ?? ""} onChange={(v) => setForm({ ...form, channel: v })} list="admin-channels" />
-                    <AInput label="Category" value={form.category ?? ""} onChange={(v) => setForm({ ...form, category: v })} list="admin-categories" />
-                    <div className="sm:col-span-2"><AInput label="Tags (comma-separated)" value={tagsText} onChange={setTagsText} placeholder="travel, 4k, guide" /></div>
-                    <div className="sm:col-span-2"><AInput label="Thumbnail image URL (empty = automatic art)" value={form.thumbnailUrl ?? ""} onChange={(v) => setForm({ ...form, thumbnailUrl: v })} placeholder="https://…" /></div>
-                    <AInput label="SEO title (empty = falls back to title)" value={form.seoTitle ?? ""} onChange={(v) => setForm({ ...form, seoTitle: v })} />
-                    <AInput label="SEO description" value={form.seoDescription ?? ""} onChange={(v) => setForm({ ...form, seoDescription: v })} />
-                    <div className="flex flex-wrap items-center gap-5 sm:col-span-2">
-                      <ACheck label="Featured" checked={form.featured} onChange={(v) => setForm({ ...form, featured: v })} />
-                      <ACheck label="NEW badge" checked={form.badgeNew} onChange={(v) => setForm({ ...form, badgeNew: v })} />
-                      <ACheck label="HD" checked={form.hd} onChange={(v) => setForm({ ...form, hd: v })} />
-                    </div>
-                  </div>
-                  <datalist id="admin-creators">{eff.creators.map((c) => <option key={c.name} value={c.name} />)}</datalist>
-                  <datalist id="admin-channels">{eff.channels.map((c) => <option key={c.name} value={c.name} />)}</datalist>
-                  <datalist id="admin-categories">{eff.categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
-                  {formError && <p role="alert" className="mt-3 rounded-xl bg-red-500/15 px-4 py-2.5 text-sm font-semibold text-red-300">{formError}</p>}
-                  <p className="mt-3 text-[13px] text-[var(--dim)]">Any field you leave empty is stored as <b className="text-zinc-200">null</b> — the site simply hides that piece (no duration, no views, no description) instead of inventing a value.</p>
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    <button type="submit" className="rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Save video</button>
-                    <button type="button" onClick={() => setForm(null)} className="rounded-full border border-[var(--border)] px-6 py-3 text-sm font-bold text-white transition active:scale-95">Cancel</button>
-                  </div>
-                </form>
-              )}
-
-              <div className="mt-4 space-y-2.5">
-                {filteredVideos.slice(0, vShow).map((v) => (
-                  <div key={v.id} className={`flex items-center gap-3 rounded-2xl border bg-[var(--surface)] p-3 ${selectedIds.includes(v.id) ? "border-[var(--accent)]" : "border-[var(--border)]"}`}>
-                    <input type="checkbox" aria-label={`Select video: ${v.title}`} checked={selectedIds.includes(v.id)} onChange={() => toggleSelect(v.id)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
-                    <div className="w-24 shrink-0 sm:w-32"><Thumb v={v} /></div>
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-1 text-sm font-bold text-white">{v.title}</p>
-                      <p className="mt-0.5 line-clamp-1 text-xs text-[var(--dim)]">{v.category}{v.creator ? ` · ${v.creator}` : ""}{v.channel ? ` · ${v.channel}` : ""}</p>
-                      <p className={`mt-0.5 text-xs font-semibold ${v.embedUrl ? "text-emerald-400" : "text-amber-400"}`}>{v.embedUrl ? "Embed source set" : "No video source"}</p>
-                    </div>
-                    <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
-                      <button type="button" onClick={() => onOpenVideo(v)} className="rounded-full bg-[var(--surface2)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">View</button>
-                      <button type="button" onClick={() => openEdit(v)} className="rounded-full bg-[var(--surface2)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Edit</button>
-                      {confirmDeleteId === v.id ? (
-                        <>
-                          <button type="button" onClick={() => deleteVideo(v)} className="rounded-full bg-red-600 px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Confirm delete</button>
-                          <button type="button" onClick={() => setConfirmDeleteId(null)} className="rounded-full border border-[var(--border)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Keep</button>
-                        </>
-                      ) : (
-                        <button type="button" onClick={() => setConfirmDeleteId(v.id)} className="rounded-full border border-red-500/50 px-3.5 py-2 text-[13px] font-bold text-red-400 transition active:scale-95">Delete</button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {filteredVideos.length === 0 && <p className="py-8 text-center text-sm text-[var(--dim)]">No videos match this search.</p>}
-                {filteredVideos.length > vShow && (
-                  <button type="button" onClick={() => setVShow(vShow + 40)} className="w-full rounded-full border border-[var(--border)] py-3 text-sm font-bold text-white transition active:scale-[0.99]">Show more ({filteredVideos.length - vShow} more)</button>
-                )}
-              </div>
-            </section>
-          )}
-
-          {section === "taxonomy" && (
-            <section aria-label="Categories, models, channels and tags">
-              <h2 className="font-display text-lg font-extrabold text-white">Categories / Models / Channels / Tags</h2>
-              <p className="mt-1 text-sm text-[var(--dim)]">Counts are calculated from the videos on the site. Renaming also renames it on every video that uses it.</p>
-              <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto" role="tablist" aria-label="Taxonomy type">
-                {(["categories", "models", "channels", "tags"] as TaxTab[]).map((t) => (
-                  <button key={t} type="button" role="tab" aria-selected={taxTab === t} onClick={() => { setTaxTab(t); setRenameOf(null); setConfirmTaxDelete(null); setTaxSelected([]); setConfirmTaxBulkDelete(false); }} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold capitalize transition active:scale-95 ${taxTab === t ? "bg-white text-black" : "bg-[var(--surface2)] text-white"}`}>{t}</button>
-                ))}
-              </div>
-              <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
-                <input aria-label="New name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={`New ${taxTab === "categories" ? "category" : taxTab === "models" ? "model" : taxTab === "channels" ? "channel" : "tag"} name`} className={inputCls} />
-                {taxTab === "channels" && <input aria-label="Channel creator" value={newCreator} onChange={(e) => setNewCreator(e.target.value)} placeholder="Creator / model for this channel" className={inputCls} />}
-                <button type="button" onClick={() => { taxAdd(taxTab, newName, newCreator); setNewName(""); setNewCreator(""); }} className="shrink-0 rounded-full bg-[var(--accent)] px-6 py-2.5 font-display text-sm font-black text-white transition active:scale-95">Add</button>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <label className="flex cursor-pointer items-center gap-2 py-1 text-sm font-semibold text-zinc-200">
-                  <input type="checkbox" aria-label={`Select all ${taxTab}`} checked={allTaxSelected} onChange={toggleTaxSelectAll} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
-                  Select all {taxTab} ({taxItems.length})
-                </label>
-                {taxSelected.length > 0 && <span className="text-sm font-semibold text-[var(--accent)]">{taxSelected.length} selected</span>}
-              </div>
-              {taxSelected.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3">
-                  <span className="text-sm font-bold text-white">{taxSelected.length} {taxSelected.length === 1 ? taxSingular : taxSingular === "category" ? "categories" : `${taxSingular}s`} selected</span>
-                  {confirmTaxBulkDelete ? (
-                    <>
-                      <button type="button" onClick={deleteTaxSelected} className="rounded-full bg-red-600 px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Confirm delete {taxSelected.length} {taxSelected.length === 1 ? taxSingular : taxSingular === "category" ? "categories" : `${taxSingular}s`}</button>
-                      <button type="button" onClick={() => setConfirmTaxBulkDelete(false)} className="rounded-full border border-[var(--border)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Keep</button>
-                    </>
-                  ) : (
-                    <button type="button" onClick={() => setConfirmTaxBulkDelete(true)} className="rounded-full bg-red-600 px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Delete selected</button>
-                  )}
-                  <button type="button" onClick={() => { setTaxSelected([]); setConfirmTaxBulkDelete(false); }} className="rounded-full border border-[var(--border)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Clear selection</button>
-                </div>
-              )}
-              <div className="mt-4 divide-y divide-[var(--border)] rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4">
-                {taxItems.map((item) => (
-                  <div key={item.name} className="flex flex-wrap items-center gap-2.5 py-3">
-                    {renameOf === item.name ? (
-                      <>
-                        <input aria-label={`Rename ${item.name}`} value={renameText} onChange={(e) => setRenameText(e.target.value)} className={`${inputCls} min-w-0 flex-1`} />
-                        <button type="button" onClick={() => { taxRename(taxTab, item.name, renameText); setTaxSelected((prev) => prev.map((x) => (x === item.name ? renameText.trim() || x : x))); setRenameOf(null); }} className="rounded-full bg-[var(--accent)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Save</button>
-                        <button type="button" onClick={() => setRenameOf(null)} className="rounded-full border border-[var(--border)] px-4 py-2 text-[13px] font-bold text-white transition active:scale-95">Cancel</button>
-                      </>
-                    ) : (
-                      <>
-                        <input type="checkbox" aria-label={`Select ${taxSingular}: ${item.name}`} checked={taxSelected.includes(item.name)} onChange={() => toggleTaxSelect(item.name)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
-                        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{item.name}</span>
-                        <span className="text-xs text-[var(--dim)]">{item.count} videos</span>
-                        <button type="button" onClick={() => { setRenameOf(item.name); setRenameText(item.name); }} className="rounded-full bg-[var(--surface2)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Rename</button>
-                        {confirmTaxDelete === item.name ? (
-                          <>
-                            <button type="button" onClick={() => { taxDelete(taxTab, item.name); setTaxSelected((prev) => prev.filter((x) => x !== item.name)); setConfirmTaxDelete(null); }} className="rounded-full bg-red-600 px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Confirm delete</button>
-                            <button type="button" onClick={() => setConfirmTaxDelete(null)} className="rounded-full border border-[var(--border)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Keep</button>
-                          </>
-                        ) : (
-                          <button type="button" onClick={() => setConfirmTaxDelete(item.name)} className="rounded-full border border-red-500/50 px-3.5 py-2 text-[13px] font-bold text-red-400 transition active:scale-95">Delete</button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ))}
-                {taxItems.length === 0 && <p className="py-6 text-center text-sm text-[var(--dim)]">Nothing here yet.</p>}
-              </div>
-            </section>
-          )}
-
-          {section === "csv" && (
-            <section aria-label="CSV import">
-              <h2 className="font-display text-lg font-extrabold text-white">CSV Import</h2>
-              <p className="mt-1 text-sm leading-relaxed text-[var(--dim)]">
-                Columns: <span className="text-zinc-200">{CSV_COLUMNS.join(", ")}</span>. Imported videos are <b className="text-zinc-200">added</b> to the catalog — nothing is replaced.
-                If any cell in a row is empty, that field is stored as <b className="text-zinc-200">null</b>: the row still imports and the site hides the missing piece. Only a row with no title <i>and</i> no embed_url is skipped, and a duplicate embed_url is skipped — both are explained in the report.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <button type="button" onClick={() => downloadTextFile("videos-template.csv", CSV_TEMPLATE)} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Download sample CSV template</button>
-                <button type="button" onClick={doExport} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">Export current videos as CSV</button>
-              </div>
-              <div
-                className={`mt-4 rounded-2xl border border-dashed p-5 text-center transition ${dragOver ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] bg-[var(--surface)]"}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) readFile(f); }}
-              >
-                <p className="text-sm font-semibold text-white">Drop a .csv file here</p>
-                <p className="mt-1 text-[13px] text-[var(--dim)]">or</p>
-                <button type="button" onClick={() => fileRef.current?.click()} className="mt-2 rounded-full bg-[var(--accent)] px-6 py-2.5 font-display text-sm font-black text-white transition active:scale-95">Choose CSV file</button>
-                <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" className="hidden" aria-label="Choose CSV file" onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); e.target.value = ""; }} />
-              </div>
-              <div className="mt-4">
-                <ATextarea label="…or paste CSV text" value={csvText} onChange={(v) => { setCsvText(v); setReport(null); }} rows={6} placeholder={"title,embed_url,description,duration,views,date,creator,channel,category,tags,thumbnail,seo_title,seo_description\nMy video,https://www.youtube.com/watch?v=…,A description,10:24,1200,2026-11-20,Creator Name,Channel Name,Travel,\"travel, 4k\",,,"} />
-              </div>
-
-              {csvRows && csvRows.length > 0 && (
-                <>
-                  <h3 className="font-display mt-6 text-base font-extrabold text-white">Preview — {csvRows.length} row{csvRows.length === 1 ? "" : "s"} as they will be stored</h3>
-                  <p className="mt-1 text-[13px] text-[var(--dim)]">Empty cells show as <span className="font-bold italic text-rose-400">null</span> — exactly what gets saved for that field.</p>
-                  <div className="mt-3 overflow-x-auto rounded-2xl border border-[var(--border)]">
-                    <table className="min-w-[900px] text-left text-xs">
-                      <thead>
-                        <tr className="bg-[var(--surface2)] text-zinc-200">
-                          <th className="px-3 py-2.5 font-bold">#</th>
-                          {CSV_COLUMNS.map((c) => <th key={c} className="px-3 py-2.5 font-bold">{c}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {csvRows.map((r, i) => (
-                          <tr key={i} className="border-t border-[var(--border)] align-top text-zinc-300">
-                            <td className="px-3 py-2 text-[var(--dim)]">{i + 1}</td>
-                            {CSV_COLUMNS.map((c) => (
-                              <td key={c} className="max-w-[220px] truncate px-3 py-2">{r[c] === null ? <span className="font-bold italic text-rose-400">null</span> : r[c]}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <button type="button" onClick={doImport} className="mt-4 rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Import {csvRows.length} row{csvRows.length === 1 ? "" : "s"}</button>
-                </>
-              )}
-              {csvRows && csvRows.length === 0 && <p className="mt-4 text-sm text-[var(--dim)]">No data rows found in this CSV yet.</p>}
-
-              {report && (
-                <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4" role="status" aria-label="Import report">
-                  <h3 className="font-display text-base font-extrabold text-white">Import report</h3>
-                  <p className="mt-1.5 text-sm text-zinc-200"><b className="text-emerald-400">{report.added}</b> video{report.added === 1 ? "" : "s"} added · <b className={report.skipped.length ? "text-amber-400" : "text-zinc-200"}>{report.skipped.length}</b> skipped</p>
-                  {report.skipped.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-sm font-bold text-white">Skipped rows</p>
-                      <ul className="mt-1.5 space-y-1 text-sm text-zinc-300">
-                        {report.skipped.map((s) => <li key={s.row}>Row {s.row}: {s.reason}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  {report.nullFields.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-sm font-bold text-white">Fields stored as null</p>
-                      <ul className="mt-1.5 space-y-1 text-sm text-zinc-300">
-                        {report.nullFields.map((n) => (
-                          <li key={n.row}>Row {n.row} ({n.title}): {n.fields.length ? n.fields.join(", ") : "none — complete row"}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {report.added > 0 && <button type="button" onClick={() => setSection("videos")} className="mt-4 rounded-full bg-[var(--surface2)] px-5 py-2.5 text-sm font-bold text-white transition active:scale-95">See them in Videos</button>}
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ---------------- Main App ---------------- */
 
 type Tab = "home" | "categories" | "tags" | "creators" | "profile" | "channels";
@@ -1942,6 +1129,17 @@ const pathRoute = (): string | null => {
   return null;
 };
 
+
+/* Admin tokens are `exp.signature` with exp a plain ms timestamp.
+   A token whose exp already passed is dead — the server refuses it. */
+function tokenExpired(t: string | null): boolean {
+  if (!t) return true;
+  const exp = Number(t.split(".")[0]);
+  return !Number.isFinite(exp) || exp <= Date.now();
+}
+function isAdminSessionError(msg: string): boolean {
+  return msg.includes("Admin session");
+}
 
 export function App() {
   const qc = useQueryClient();
@@ -2002,6 +1200,7 @@ export function App() {
   const [authView, setAuthView] = useState<"login" | "signup" | null>(null);
   const [historyView, setHistoryView] = useState(false);
   const [adminView, setAdminView] = useState(false);
+  const [legalView, setLegalView] = useState<"terms" | "privacy" | null>(null);
   const [fileView, setFileView] = useState<"sitemap" | "robots" | null>(null);
   const [adminMountKey, setAdminMountKey] = useState(0);
   /* Admin session token: issued by the server (verifyAdminCode) when
@@ -2010,7 +1209,7 @@ export function App() {
      rides in sessionStorage so a reload keeps the session, and every
      admin save/reset presents it; the server re-checks it on each
      call, so the panel route alone can change nothing. */
-  const [adminToken, setAdminTokenState] = useState<string | null>(() => { try { return window.sessionStorage.getItem("pv-admin-token"); } catch { return null; } });
+  const [adminToken, setAdminTokenState] = useState<string | null>(() => { try { const t = window.sessionStorage.getItem("pv-admin-token"); if (t && tokenExpired(t)) { window.sessionStorage.removeItem("pv-admin-token"); return null; } return t; } catch { return null; } });
   const adminTokenRef = useRef<string | null>(adminToken);
   const setAdminToken = (t: string | null) => {
     adminTokenRef.current = t;
@@ -2058,13 +1257,13 @@ export function App() {
   const loadTimer = useRef<number | undefined>(undefined);
   const searchTimer = useRef<number | undefined>(undefined);
 
-  const stateQ = useQuery({ queryKey: ["state"], queryFn: () => api.getState({}) });
+  const stateQ = useQuery({ queryKey: ["state"], queryFn: () => api.getState({}), staleTime: 5 * 60_000, refetchOnWindowFocus: false });
 
   /* Admin-managed content: the saved admin state merged over the built-in
      catalog. These local names shadow the module-level catalog constants
      everywhere inside the component, so every list, count and page renders
      the effective (admin-aware) data. */
-  const adminQ = useQuery({ queryKey: ["admin"], queryFn: () => api.getAdminState({}) });
+  const adminQ = useQuery({ queryKey: ["admin"], queryFn: () => api.getAdminState({}), staleTime: 10 * 60_000, refetchOnWindowFocus: false });
   const adminState = useMemo(() => parseAdminState(adminQ.data?.payload), [adminQ.data]);
   const eff = useMemo(() => buildEffective(adminState), [adminState]);
   const VIDEOS = eff.videos;
@@ -2087,6 +1286,64 @@ export function App() {
   const follows = stateQ.data?.follows ?? [];
   const history = stateQ.data?.history ?? [];
 
+  /* ---- Admin save honesty + stale-panel tracking (A4/A23/A1/A12) ---- */
+  const [saveError, setSaveError] = useState("");
+  const [staleBanner, setStaleBanner] = useState(false);
+  const [otherTabOpen, setOtherTabOpen] = useState(false);
+  /* The server payload the panel last loaded from or saved: a refetch
+     that returns something else while the panel holds unsaved edits
+     means the data changed elsewhere (another tab, another device). */
+  const panelPayloadRef = useRef<string | null | undefined>(undefined);
+  const panelDirtyRef = useRef(false);
+  const handlePanelDirty = useCallback((d: boolean) => { panelDirtyRef.current = d; }, []);
+  /* A dead session drops back to the code entry (the search box) — the
+     panel route alone must never open anything. */
+  const expireAdminSession = () => {
+    setAdminToken(null);
+    setAdminView(false);
+    setSaveError("");
+    flash("Admin session expired — type the admin code in the search box to open the panel again");
+    window.location.hash = "#/";
+  };
+  const reloadPanel = () => {
+    void adminQ.refetch().then((r) => {
+      panelPayloadRef.current = r.data?.payload ?? null;
+      setStaleBanner(false);
+      setAdminMountKey((k) => k + 1);
+    });
+  };
+  const keepPanelEdits = () => {
+    setStaleBanner(false);
+    panelPayloadRef.current = adminQ.data?.payload ?? null;
+  };
+  useEffect(() => {
+    if (!adminView) { panelPayloadRef.current = undefined; setStaleBanner(false); return; }
+    const p = adminQ.data?.payload ?? null;
+    if (panelPayloadRef.current === undefined) { panelPayloadRef.current = p; return; }
+    if (p === panelPayloadRef.current) return;
+    if (panelDirtyRef.current) { setStaleBanner(true); return; }
+    /* No unsaved edits — the panel can adopt the new data. */
+    panelPayloadRef.current = p;
+    setAdminMountKey((k) => k + 1);
+  }, [adminQ.data, adminView]);
+  /* Two open admin tabs can silently overwrite each other (last save
+     wins): when this panel opens it pings, and any other open panel
+     answers — an answer within ~500ms raises the warning. */
+  useEffect(() => {
+    if (!adminView) { setOtherTabOpen(false); return; }
+    const openedAt = Date.now();
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel("pv-admin-tab");
+      ch.onmessage = (e) => {
+        if (e.data === "ping") { ch?.postMessage("pong"); setOtherTabOpen(true); }
+        else if (e.data === "pong" && Date.now() - openedAt < 500) setOtherTabOpen(true);
+      };
+      ch.postMessage("ping");
+    } catch { /* BroadcastChannel unavailable — no cross-tab warning */ }
+    return () => { try { ch?.close(); } catch { /* already closed */ } };
+  }, [adminView]);
+
   const toggle = useMutation({
     mutationFn: async (a: { kind: "like" | "save" | "follow"; itemKey: string }) => await api.toggleInteraction(a),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["state"] }),
@@ -2097,18 +1354,43 @@ export function App() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["state"] }),
   });
   const clearHist = useMutation({
-    mutationFn: async () => await api.clearHistory({}),
+    mutationFn: async () => await api.clearHistory({ token: adminTokenRef.current ?? "" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["state"] }),
   });
   const saveAdmin = useMutation({
     mutationFn: async (st: AdminState) => await api.saveAdminState({ payload: JSON.stringify(st), token: adminTokenRef.current ?? "" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin"] }),
-    onError: (e) => setNotice(e instanceof Error ? e.message : "Could not save admin changes"),
+    onSuccess: (_d, st) => {
+      /* Success is announced only here, after the server confirmed the
+         write — never at the call site. */
+      panelPayloadRef.current = JSON.stringify(st);
+      setSaveError("");
+      flash("Admin changes saved");
+      qc.invalidateQueries({ queryKey: ["admin"] });
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Could not save admin changes";
+      if (isAdminSessionError(msg)) { expireAdminSession(); return; }
+      /* The failed edits must not linger as if saved: remounting the
+         panel from the last server-confirmed state drops them. */
+      setSaveError(msg);
+      setAdminMountKey((k) => k + 1);
+    },
   });
   const resetAdmin = useMutation({
     mutationFn: async () => await api.resetAdminState({ token: adminTokenRef.current ?? "" }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin"] }); flash("All admin changes reset — defaults restored"); },
-    onError: (e) => setNotice(e instanceof Error ? e.message : "Could not reset admin changes"),
+    onSuccess: () => {
+      /* Reset deletes the stored payload, so the next fetch is null. */
+      panelPayloadRef.current = null;
+      setSaveError("");
+      qc.invalidateQueries({ queryKey: ["admin"] });
+      flash("All admin changes reset — defaults restored");
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Could not reset admin changes";
+      if (isAdminSessionError(msg)) { expireAdminSession(); return; }
+      setSaveError(msg);
+      setAdminMountKey((k) => k + 1);
+    },
   });
 
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(""), 2600); };
@@ -2169,7 +1451,7 @@ export function App() {
     requestAnimationFrame(() => scrollTopInstant());
     window.setTimeout(() => scrollTopInstant(), 60);
   };
-  const resetViews = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
+  const resetViews = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); setLegalView(null); };
   const openVideo = (v: Video) => {
     resetViews();
     setCurrent(v);
@@ -2214,7 +1496,7 @@ export function App() {
     loadTimer.current = window.setTimeout(() => setNavLoading(false), 450);
     forwardNav.current = true;
     window.location.hash = code === "en" ? `#${path}` : `#/${code}${path}`;
-    flash(`Language set to ${LANGS.find((l) => l.code === code)?.name ?? code} — interface translation is partial in this demo`);
+    flash(`Language set to ${LANGS.find((l) => l.code === code)?.name ?? code} — some pages stay in English`);
   };
   const goTab = (t: Tab) => {
     setPlaying(false);
@@ -2243,6 +1525,7 @@ export function App() {
   };
   const openAuth = (v: "login" | "signup") => { resetViews(); setAuthView(v); setDrawer(false); setAgeOk(false); nav(v === "login" ? "/login" : "/signup"); scrollTopInstant(); };
   const openHistory = () => { resetViews(); setHistoryView(true); setCurrent(null); setListing(null); setDrawer(false); nav("/history"); scrollTopInstant(); };
+  const openLegal = (v: "terms" | "privacy") => { resetViews(); setLegalView(v); setCurrent(null); setListing(null); setTab("home"); setDrawer(false); nav(v === "terms" ? "/terms" : "/privacy"); scrollTopInstant(); };
 
   /* The admin panel's only door: typing the admin code into the site's
      search box. The code lives only on the server — the client sends
@@ -2275,7 +1558,7 @@ export function App() {
     const [head = "", ...rest] = raw.split("/");
     const slug = decodeURIComponent(rest.join("/") || "");
     const fromSlug = (s: string) => titleCase(s.replace(/-/g, " "));
-    const clear = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); };
+    const clear = () => { setNotFound(false); setRoutePending(false); setAuthView(null); setHistoryView(false); setAdminView(false); setFileView(null); setLegalView(null); setCurrent(null); setListing(null); setTab("home"); };
     /* A lookup that misses may only mean the admin catalog has not
        loaded yet (imported videos/categories/models/tags live there,
        not in the built-in catalog). While it is still loading, wait
@@ -2287,12 +1570,24 @@ export function App() {
        already verified with the server (its token sits in
        sessionStorage). There is deliberately no #/admin route and no
        link to the panel anywhere on the public site. */
-    if (head === "panel") { if (adminTokenRef.current) { showAdmin(); return; } setNotFound(true); return; }
+    if (head === "panel") {
+      const t = adminTokenRef.current;
+      if (t && tokenExpired(t)) {
+        setAdminToken(null);
+        flash("Admin session expired — type the admin code in the search box to open the panel again");
+        clear();
+        return;
+      }
+      if (t) { showAdmin(); return; }
+      clear();
+      return;
+    }
     if (head === "") { clear(); setListing(null); setCurrent(null); setTab("home"); setFeed("For you"); return; }
     if (head === "login" || head === "signup") { clear(); setAuthView(head); setCurrent(null); setListing(null); return; }
     /* Premium/membership is gone (owner's rule: everything plays
        free) — the old route is a plain 404 like any unknown page. */
     if (head === "membership") { clear(); setNotFound(true); setCurrent(null); setListing(null); return; }
+    if (head === "terms" || head === "privacy") { clear(); setLegalView(head); return; }
     if (head === "history") { clear(); setHistoryView(true); setCurrent(null); setListing(null); return; }
     if (head === "categories" && !slug) { clear(); setTab("categories"); setListing(null); setCurrent(null); return; }
     if (head === "categories" && slug) { clear(); const c = effRef.current.categories.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "category", name: c.name }); setCurrent(null); setTab("home"); } else miss(); return; }
@@ -2326,6 +1621,10 @@ export function App() {
     /* We manage scroll ourselves: forward navigation goes to the top,
        browser Back restores. The browser must not restore on its own. */
     try { window.history.scrollRestoration = "manual"; } catch { /* older browser */ }
+    /* A stored admin token whose exp already passed is dead — drop it
+       (sessionStorage + state) so #/panel cannot restore a session
+       the server would refuse. */
+    if (adminTokenRef.current && tokenExpired(adminTokenRef.current)) setAdminToken(null);
     applyHash();
     /* Opened directly at a published path URL (from the sitemap, a
        canonical or a shared link) with no hash route set: translate
@@ -2376,7 +1675,7 @@ export function App() {
      load fails — the route is re-resolved, and a miss then is a
      real 404. */
   const adminReadyRef = useRef(false);
-  useEffect(() => { adminReadyRef.current = !!adminQ.data || adminQ.isError; }, [adminQ.data, adminQ.isError]);
+  useEffect(() => { adminReadyRef.current = !!adminQ.data; }, [adminQ.data]);
   const notFoundRef = useRef(false);
   useEffect(() => { notFoundRef.current = notFound; }, [notFound]);
   const routePendingRef = useRef(false);
@@ -2420,36 +1719,50 @@ export function App() {
   }, [artTheater]);
   /* Keyboard shortcuts for the catalog (art) player — same set as the
      native player. The embed player registers its own; only one player
-     is ever mounted, so they never double-fire. */
+     is ever mounted, so they never double-fire. The listener is
+     registered once: everything it reads goes through refs, so it
+     never re-binds when play state, progress or theater mode change. */
+  const artKeyCurrentRef = useRef(current);
+  artKeyCurrentRef.current = current;
+  const artKeySpeedMenuRef = useRef(speedMenuOpen);
+  artKeySpeedMenuRef.current = speedMenuOpen;
+  const artKeyTheaterRef = useRef(artTheater);
+  artKeyTheaterRef.current = artTheater;
+  const artKeyFsRef = useRef(artFs);
+  artKeyFsRef.current = artFs;
+  const startPlaybackRef = useRef(startPlayback);
+  startPlaybackRef.current = startPlayback;
+  const seekArtByRef = useRef(seekArtBy);
+  seekArtByRef.current = seekArtBy;
   useEffect(() => {
-    if (!current || current.embedUrl) return;
     const onKey = (e: KeyboardEvent) => {
+      const cur = artKeyCurrentRef.current;
+      if (!cur || cur.embedUrl) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (shortcutTargetBlocked(e)) return;
       const k = e.key;
       if (k === "Escape") {
-        if (speedMenuOpen) { setSpeedMenuOpen(false); return; }
-        if (artTheater) { setArtTheater(false); return; }
+        if (artKeySpeedMenuRef.current) { setSpeedMenuOpen(false); return; }
+        if (artKeyTheaterRef.current) { setArtTheater(false); return; }
         return;
       }
       if (k === " " || k === "k" || k === "K") {
         if (k === " " && (e.target as HTMLElement | null)?.tagName === "BUTTON") return;
         e.preventDefault();
-        startPlayback();
-      } else if (k === "ArrowLeft") { e.preventDefault(); seekArtBy(-5); }
-      else if (k === "ArrowRight") { e.preventDefault(); seekArtBy(5); }
-      else if (k === "j" || k === "J") seekArtBy(-10);
-      else if (k === "l" || k === "L") seekArtBy(10);
+        startPlaybackRef.current();
+      } else if (k === "ArrowLeft") { e.preventDefault(); seekArtByRef.current(-5); }
+      else if (k === "ArrowRight") { e.preventDefault(); seekArtByRef.current(5); }
+      else if (k === "j" || k === "J") seekArtByRef.current(-10);
+      else if (k === "l" || k === "L") seekArtByRef.current(10);
       else if (k === "ArrowUp") { e.preventDefault(); setVolume((vol) => Math.min(100, vol + 10)); setMuted(false); }
       else if (k === "ArrowDown") { e.preventDefault(); setVolume((vol) => Math.max(0, vol - 10)); setMuted(false); }
-      else if (k === "f" || k === "F") artFs.toggle();
+      else if (k === "f" || k === "F") artKeyFsRef.current.toggle();
       else if (k === "m" || k === "M") setMuted((m) => !m);
       else if (/^[0-9]$/.test(k)) setProgress(Number(k) * 10);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, playing, progress, speedMenuOpen, artTheater, artFs]);
+  }, []);
 
   /* Typing in the header search creates a real history entry (hash push) + loading bar + title change. */
   useEffect(() => {
@@ -2467,10 +1780,10 @@ export function App() {
        to the normal search. */
     let cancelled = false;
     searchTimer.current = window.setTimeout(() => {
-      void (async () => {
-        if (await tryAdminCode(q)) { if (!cancelled) { setQuery(""); setSearchDraft(""); goAdmin(); } return; }
-        if (!cancelled) openListing({ kind: "search", name: q });
-      })();
+      /* The search navigates at once; the admin-code check runs in
+         parallel and only a confirmed match diverts to the panel. */
+      openListing({ kind: "search", name: q });
+      void tryAdminCode(q).then((ok) => { if (ok && !cancelled) { setQuery(""); setSearchDraft(""); goAdmin(); } });
     }, 650);
     return () => { cancelled = true; window.clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2556,7 +1869,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listing?.kind, listing?.name]);
 
-  const viewKey = adminView ? "admin" : notFound ? "404" : authView ? `auth:${authView}` : historyView ? "history" : current ? `video:${current.id}` : listing ? `list:${listing.kind}:${listing.name}:${listPage}` : `tab:${tab}`;
+  const viewKey = adminView ? "admin" : legalView ? `legal:${legalView}` : notFound ? "404" : authView ? `auth:${authView}` : historyView ? "history" : current ? `video:${current.id}` : listing ? `list:${listing.kind}:${listing.name}:${listPage}` : `tab:${tab}`;
   useEffect(() => {
     const onScroll = () => scrollMem.current.set(viewKey, readScroll());
     const sc = getScroller();
@@ -2584,6 +1897,7 @@ export function App() {
     const brand = texts.siteName || "Pulse Video";
     document.title =
       adminView ? `Admin Panel | ${brand}` :
+      legalView ? `${legalView === "terms" ? "Terms of Use" : "Privacy Policy"} — ${brand}` :
       routePending ? `Loading… — ${brand}` :
       notFound ? `Page not found — ${brand}` :
       authView === "login" ? "Log in - pulsevideo" :
@@ -2605,7 +1919,7 @@ export function App() {
       tab === "creators" ? `Models Having Most Videos | ${brand}` :
       tab === "channels" ? `Top Rated Channels | ${brand}` :
       `Your Library | ${brand}`;
-  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, texts.siteName, seo.siteTitle]);
+  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, legalView, texts.siteName, seo.siteTitle]);
 
   /* Dynamic SEO: every view gets its own meta description, Open Graph
      and Twitter cards, canonical URL, robots directive and JSON-LD
@@ -2625,6 +1939,7 @@ export function App() {
     };
     const feedRoutes: Record<string, string> = { Trending: "/most-popular", "Top rated": "/top-rated", New: "/latest-updates", Longest: "/longest" };
     const route =
+      legalView ? (legalView === "terms" ? "/terms" : "/privacy") :
       adminView ? "/panel" :
       authView ? `/${authView}` :
       historyView ? "/history" :
@@ -2666,7 +1981,9 @@ export function App() {
     /* A video-file thumbnail (preview.mp4) is not a share image —
        social crawlers reject it — so it is left out of og:image and
        the JSON-LD thumbnail list rather than pointing them at a movie. */
-    const ogImage = current?.thumbnailUrl && !isVideoFileUrl(current.thumbnailUrl) ? current.thumbnailUrl : null;
+    /* No video image: fall back to the branded share image, so the
+       static og:image in index.html survives this effect's rewrite. */
+    const ogImage = current?.thumbnailUrl && !isVideoFileUrl(current.thumbnailUrl) ? current.thumbnailUrl : "/og-image.svg";
     setMeta("name", "description", desc);
     setMeta("name", "keywords", seo.metaKeywords);
     setMeta("name", "robots", noindex ? "noindex, nofollow" : "index, follow, max-image-preview:large");
@@ -2755,7 +2072,7 @@ export function App() {
       script.remove();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, seo, texts.siteName, eff]);
+  }, [current, listing, tab, notFound, routePending, authView, historyView, adminView, fileView, legalView, seo, texts.siteName, eff]);
 
   const navActive: Tab = current ? "home" : listing ? (listing.kind === "tag" ? "tags" : listing.kind === "search" ? "tags" : listing.kind === "creator" ? "creators" : listing.kind === "category" || listing.kind === "channel" ? "categories" : "home") : historyView || authView ? "profile" : tab === "channels" ? "categories" : tab;
 
@@ -2769,13 +2086,18 @@ export function App() {
   }, [progress, autoplay, current]);
 
   const shownTags = letter === "Popular" ? [...TAGS].sort((a, b) => b.count - a.count) : letter === "0-9" ? TAGS.filter((t) => /^[0-9]/.test(t.name)) : letter === "#" ? TAGS.filter((t) => !/^[a-z0-9]/i.test(t.name)) : TAGS.filter((t) => t.name.toUpperCase().startsWith(letter));
+  /* Models/Channels tabs show only entries that actually have videos —
+     with the demo catalog gone, empty entries would otherwise parade
+     "0 videos" rows. */
+  const modelsWithVideos = CREATORS.filter((c) => c.videos > 0);
+  const channelsWithVideos = CHANNELS.filter((ch) => Number(ch.videos) > 0);
   const modelsPerPage = 12;
-  const totalModelPages = Math.max(1, Math.ceil(CREATORS.length / modelsPerPage));
+  const totalModelPages = Math.max(1, Math.ceil(modelsWithVideos.length / modelsPerPage));
   /* Clamp the page like listings do: if the catalog shrank (admin
      deletes) the stored page can point past the end and would render
      an empty Models page. */
   const safeModelPage = Math.min(modelPage, totalModelPages);
-  const modelSlice = CREATORS.slice((safeModelPage - 1) * modelsPerPage, safeModelPage * modelsPerPage);
+  const modelSlice = modelsWithVideos.slice((safeModelPage - 1) * modelsPerPage, safeModelPage * modelsPerPage);
 
   const fmtTime = (sec: number) => fmtDur(Math.floor(sec));
   const chooseCookie = (v: string) => { setCookieChoice(v); try { window.localStorage.setItem("pv-cookie", v); } catch { /* storage unavailable */ } };
@@ -2816,17 +2138,27 @@ export function App() {
           )}
         </div>
       ) : adminView ? (
+        <Suspense fallback={<div className="mx-auto max-w-xl px-4 pb-24 pt-16 text-center"><h1 className="font-display text-xl font-black text-white">Admin Panel</h1><p className="mt-2 text-sm text-[var(--dim)]">Loading your site data…</p></div>}>
         <AdminPanel
           key={adminMountKey}
           initial={adminState}
-          onSave={(st) => saveAdmin.mutate(st)}
-          onReset={() => resetAdmin.mutate()}
+          onSave={(st) => { if (saveAdmin.isPending || resetAdmin.isPending) return; saveAdmin.mutate(st); }}
+          onReset={() => { if (saveAdmin.isPending || resetAdmin.isPending) return; resetAdmin.mutate(); }}
           onExit={() => goTab("home")}
           onOpenVideo={openVideo}
           flash={flash}
           theme={theme}
           onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          saveDisabled={saveAdmin.isPending || resetAdmin.isPending || staleBanner}
+          saveError={saveError}
+          onDismissSaveError={() => setSaveError("")}
+          staleBanner={staleBanner}
+          onReloadPanel={reloadPanel}
+          onKeepEdits={keepPanelEdits}
+          onDirtyChange={handlePanelDirty}
+          otherTabOpen={otherTabOpen}
         />
+        </Suspense>
       ) : authView ? (
         /* ===== LOGIN / SIGNUP ===== */
         <div className="mx-auto flex min-h-screen max-w-md flex-col px-4 pb-16 pt-5">
@@ -2835,8 +2167,6 @@ export function App() {
           </button>
           <form className="mt-10 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6" onSubmit={(e) => { e.preventDefault(); if (authView === "signup" && !ageOk) { flash("Please confirm you are 18 or older"); return; } setSignedIn(true); flash(authView === "signup" ? "Account created — welcome to Pulse Video" : "Welcome back, Guest viewer"); goTab("home"); }}>
             <h1 className="font-display text-lg font-black text-white sm:text-xl">{authView === "login" ? "Log in" : "Create your account"}</h1>
-            <button type="button" onClick={() => flash("Google sign-in is not part of this demo")} className="mt-5 w-full rounded-full bg-white py-3 font-bold text-black transition active:scale-[0.99]"><span className="mr-2 font-black text-[#4285f4]">G</span>Continue with Google</button>
-            <div className="my-5 flex items-center gap-3 text-sm text-[var(--dim)]"><span className="h-px flex-1 bg-[var(--border)]" />or<span className="h-px flex-1 bg-[var(--border)]" /></div>
             <label className="block text-sm font-semibold text-zinc-200">{authView === "login" ? "Email or username" : "Email"}
               <input required type={authView === "login" ? "text" : "email"} autoComplete={authView === "login" ? "username" : "email"} className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-4 py-3 text-white focus:border-[var(--accent)] focus:outline-none" />
             </label>
@@ -2922,7 +2252,14 @@ export function App() {
                 <path d="M45 25a20 20 0 0 0-20-20" stroke="#f43f5e" strokeWidth="5" strokeLinecap="round" />
               </svg>
             </span>
-            <p className="mt-4 text-[var(--dim)]">Loading…</p>
+            {adminQ.isError ? (
+              <>
+                <p className="mt-4 text-[var(--dim)]">The site data could not be loaded.</p>
+                <button type="button" onClick={() => { void adminQ.refetch(); }} className="mt-5 rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95">Retry</button>
+              </>
+            ) : (
+              <p className="mt-4 text-[var(--dim)]">Loading…</p>
+            )}
           </section>
         )}
 
@@ -2937,6 +2274,21 @@ export function App() {
                 <button key={c.name} type="button" onClick={() => openListing({ kind: "category", name: c.name })} className="py-1 text-sm text-zinc-300">{c.name}</button>
               ))}
             </nav>
+          </section>
+        )}
+
+        {/* ===== TERMS / PRIVACY (real pages from the admin Site Text) ===== */}
+        {!notFound && legalView && (
+          <section className="pt-5" aria-label={legalView === "terms" ? "Terms of use" : "Privacy policy"}>
+            <h1 className="font-display text-xl font-black text-white sm:text-2xl">{legalView === "terms" ? "Terms of Use" : "Privacy Policy"}</h1>
+            <div className="mt-4 max-w-2xl space-y-4">
+              {(() => {
+                const raw = (legalView === "terms" ? texts.termsText : texts.privacyText) || "This page has not been written yet.";
+                return raw.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).map((p, i) => (
+                  <p key={i} className="text-sm leading-relaxed text-zinc-200">{p}</p>
+                ));
+              })()}
+            </div>
           </section>
         )}
 
@@ -2973,11 +2325,13 @@ export function App() {
               <p className="py-12 text-center text-sm text-zinc-300">Nothing watched yet. Videos you watch on this device appear here.</p>
             ) : (
               <>
-                <div className="mt-3 text-right">
-                  <button type="button" onClick={() => clearHist.mutate()} className="inline-flex items-center gap-1 py-1 text-sm text-[var(--dim)]"><Icon n="trash" size={15} tone="accent" /> Clear history</button>
-                </div>
+                {adminToken && (
+                  <div className="mt-3 text-right">
+                    <button type="button" onClick={() => clearHist.mutate()} className="inline-flex items-center gap-1 py-1 text-sm text-[var(--dim)]"><Icon n="trash" size={15} tone="accent" /> Clear history</button>
+                  </div>
+                )}
                 <div className="mt-2 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {history.map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} /> : null; })}
+                  {history.slice(0, 200).map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} /> : null; })}
                 </div>
               </>
             )}
@@ -3024,7 +2378,6 @@ export function App() {
                     <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={() => setMuted(!muted)} className="p-1.5"><Icon n={muted ? "mute" : "volume"} size={20} tone="accent" /></button>
                     <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[#f43f5e] sm:block" />
                     <SpeedMenu speed={speed} open={speedMenuOpen} onToggle={() => setSpeedMenuOpen((o) => !o)} onSelect={(s) => { setSpeed(s); setSpeedMenuOpen(false); }} />
-                    <button type="button" aria-label="Mini player" onClick={() => flash("Mini player is not available in this demo player")} className="p-1.5"><Icon n="pip" size={20} tone="accent" /></button>
                     <button type="button" aria-label={artTheater ? "Exit theater mode" : "Theater mode"} aria-pressed={artTheater} onClick={() => setArtTheater((t) => !t)} className="hidden p-1.5 md:block"><Icon n="theater" size={20} tone="accent" /></button>
                     <button type="button" aria-label={artFs.big ? "Exit fullscreen" : "Fullscreen"} aria-pressed={artFs.big} onClick={artFs.toggle} className="p-1.5"><Icon n={artFs.big ? "compress" : "expand"} size={20} tone="accent" /></button>
                   </span>
@@ -3056,7 +2409,6 @@ export function App() {
               <button type="button" aria-label="Share video" onClick={() => flash("Link ready — use your browser's share menu to send it")} className="p-2 transition active:scale-90"><Icon n="share" size={20} tone="accent" /></button>
               <button type="button" aria-label="Comments" onClick={() => setCommentsOpen(!commentsOpen)} className="flex items-center gap-1 p-2 transition active:scale-90"><Icon n="comment" size={20} tone="accent" /><span className="text-sm font-semibold">2</span></button>
               <button type="button" aria-label="Report video" onClick={() => flash("Thanks — our team will take a look")} className="flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90"><Icon n="flag" size={19} tone="accent" /><span className="text-sm font-semibold">Report</span></button>
-              <button type="button" aria-label="Download video" onClick={() => flash("Downloads are not part of this demo")} className="p-2 transition active:scale-90"><Icon n="download" size={20} tone="accent" /></button>
             </div>
 
             {current.creator && (
@@ -3251,7 +2603,7 @@ export function App() {
                 <>
                   <div className="mt-4 flex gap-2">
                     <label className="relative flex-1">
-                      <input aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); void (async () => { if (await tryAdminCode(text)) { setSearchDraft(""); setQuery(""); goAdmin(); } else openListing({ kind: "search", name: text }); })(); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+                      <input aria-label="Search term" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && searchDraft.trim()) { const text = searchDraft.trim(); openListing({ kind: "search", name: text }); void tryAdminCode(text).then((ok) => { if (ok) { setSearchDraft(""); setQuery(""); goAdmin(); } }); } }} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
                       {searchDraft
                         ? <button type="button" aria-label="Clear search" onClick={() => { setSearchDraft(""); setQuery(""); goTab("tags"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
                         : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
@@ -3345,7 +2697,7 @@ export function App() {
         })()}
 
         {/* ===== HOME ===== */}
-        {!notFound && !historyView && !current && !listing && !fileView && tab === "home" && (
+        {!notFound && !historyView && !current && !listing && !fileView && !legalView && tab === "home" && (
           <>
             <h1 className="font-display pt-5 text-xl font-black leading-tight text-white sm:text-2xl">{texts.homeH1}</h1>
             <div className="no-scrollbar -mx-4 flex gap-6 overflow-x-auto px-4 pt-3" role="tablist" aria-label="Feed filters">
@@ -3366,29 +2718,28 @@ export function App() {
               <button type="button" onClick={() => goTab("categories")} className="flex min-h-11 shrink-0 items-center text-[13px] font-bold text-[var(--accent)]">All {CATEGORIES.length}</button>
             </div>
 
+            {trending.length > 0 && (
             <section aria-label="Trending now" className="pt-5">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secTrending}</h2>
                 <button type="button" onClick={() => { setFeed("Trending"); openListing({ kind: "feed", name: "Trending" }); }} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mx-auto mt-3 flex w-full max-w-[760px] flex-col gap-6">
-                {trending.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} rank={i + 1} />)}
+                {trending.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} rank={i + 1} priority={i === 0} />)}
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Trending"); openListing({ kind: "feed", name: "Trending" }); }} />
             </section>
+            )}
 
+            {latestHome.length > 0 && (
             <section aria-label="Latest videos" className="pt-7">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{chip === "All" ? texts.secLatest : `${chip} videos`}</h2>
                 <button type="button" onClick={() => openListing({ kind: "feed", name: "New" })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
-              {latestHome.length === 0 ? (
-                <p className="py-10 text-center text-[var(--dim)]">No videos in this category yet.</p>
-              ) : (
-                <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {latestHome.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} badge={v.days <= 6 ? "NEW" : undefined} />)}
-                </div>
-              )}
+              <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
+                {latestHome.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} badge={v.days <= 6 ? "NEW" : undefined} />)}
+              </div>
               {!showAll && (chip === "All" ? newest.length : newest.filter((v) => v.category === chip || v.tags.includes(chip.toLowerCase())).length) > 24 && (
                 <div className="mt-7 text-center">
                   <button type="button" onClick={() => setShowAll(true)} className="rounded-full bg-white px-10 py-3.5 font-bold text-black">{btnLabel("showMore", "Show more")}</button>
@@ -3396,6 +2747,7 @@ export function App() {
               )}
             <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "feed", name: "New" })} />
             </section>
+            )}
 
             {/* The home showcase lists only models that actually have
                 videos; the full list (including empty ones) stays on
@@ -3439,6 +2791,7 @@ export function App() {
             </section>
             )}
 
+            {becauseList.length > 0 && (
             <section aria-label={`Because you watch ${becauseCat}`} className="pt-9">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secBecause} {becauseCat}</h2>
@@ -3449,7 +2802,9 @@ export function App() {
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "category", name: becauseCat })} />
             </section>
+            )}
 
+            {topRated.length > 0 && (
             <section aria-label="Top rated" className="pt-9">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black sm:text-xl text-white">{texts.secTopRated}</h2>
@@ -3460,6 +2815,7 @@ export function App() {
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} />
             </section>
+            )}
 
           </>
         )}
@@ -3473,9 +2829,9 @@ export function App() {
               <span className="font-semibold text-zinc-200">Channels</span>
             </nav>
             <h1 className="font-display mt-3 text-xl font-black text-white sm:text-2xl">Top Rated Channels</h1>
-            <p className="mt-1 text-[13px] text-[var(--dim)]">{CHANNELS.length} channels</p>
+            <p className="mt-1 text-[13px] text-[var(--dim)]">{channelsWithVideos.length} channels</p>
             <div className="mt-5 grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-3">
-              {CHANNELS.map((ch) => (
+              {channelsWithVideos.map((ch) => (
                 <button key={ch.name} type="button" onClick={() => openListing({ kind: "channel", name: ch.name })} className="relative block overflow-hidden rounded-xl text-left transition active:scale-[0.98]" style={{ aspectRatio: "16/9", background: `linear-gradient(135deg, ${ch.g[0]}, ${ch.g[1]})` }} aria-label={`Channel ${ch.name}`}>
                   <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" aria-hidden="true" />
                   <span className="absolute inset-x-3 bottom-2.5">
@@ -3564,7 +2920,7 @@ export function App() {
               <span className="font-semibold text-zinc-200">Models</span>
             </nav>
             <h1 className="font-display mt-3 text-xl font-black leading-tight text-white sm:text-2xl">Models Having Most Videos</h1>
-            <p className="mt-1 text-[13px] text-[var(--dim)]">{CREATORS.length} models</p>
+            <p className="mt-1 text-[13px] text-[var(--dim)]">{modelsWithVideos.length} models</p>
             <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4">
               {modelSlice.map((c) => (
                 <div key={c.name} className="flex flex-col items-center text-center">
@@ -3591,7 +2947,7 @@ export function App() {
               <div key={sec.title} className="mt-7">
                 <div className="flex items-baseline justify-between">
                   <h2 className="font-display text-xl font-extrabold text-white">{sec.title}</h2>
-                  {"clear" in sec && sec.keys.length > 0 && <button type="button" onClick={() => clearHist.mutate()} className="flex items-center gap-1 py-1 text-sm text-[var(--dim)]"><Icon n="trash" size={15} tone="accent" /> Clear</button>}
+                  {adminToken && "clear" in sec && sec.keys.length > 0 && <button type="button" onClick={() => clearHist.mutate()} className="flex items-center gap-1 py-1 text-sm text-[var(--dim)]"><Icon n="trash" size={15} tone="accent" /> Clear</button>}
                 </div>
                 {sec.keys.length === 0 ? <p className="mt-2 text-[var(--dim)]">{sec.empty}</p> : (
                   <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
@@ -3622,8 +2978,8 @@ export function App() {
             <button type="button" onClick={() => flash("Content removal requests: use the flag icon on any video")} className="py-1">Content removal</button>
             <button type="button" onClick={() => flash("All models on Pulse Video are verified adults")} className="py-1">2257</button>
             <button type="button" onClick={() => flash("DMCA: report via the flag icon on any video")} className="py-1">DMCA</button>
-            <button type="button" onClick={() => flash("Terms of use — demo page")} className="py-1">Terms</button>
-            <button type="button" onClick={() => flash("Privacy policy — demo page")} className="py-1">Privacy</button>
+            <button type="button" onClick={() => openLegal("terms")} className="py-1">Terms</button>
+            <button type="button" onClick={() => openLegal("privacy")} className="py-1">Privacy</button>
           </nav>
           <p className="mt-4 leading-relaxed">{texts.footerText}</p>
         </footer>
@@ -3673,8 +3029,8 @@ export function App() {
               <button type="button" onClick={() => flash("Content removal requests: use the flag icon on any video")} className="py-1">Content removal</button>
               <button type="button" onClick={() => flash("All models on Pulse Video are verified adults")} className="py-1">2257</button>
               <button type="button" onClick={() => flash("DMCA: report via the flag icon on any video")} className="py-1">DMCA</button>
-              <button type="button" onClick={() => flash("Terms of use — demo page")} className="py-1">Terms</button>
-              <button type="button" onClick={() => flash("Privacy policy — demo page")} className="py-1">Privacy</button>
+              <button type="button" onClick={() => openLegal("terms")} className="py-1">Terms</button>
+              <button type="button" onClick={() => openLegal("privacy")} className="py-1">Privacy</button>
             </nav>
           </div>
         </div>
@@ -3739,7 +3095,7 @@ export function App() {
       {!cookieChoice && (
         <div className="mx-auto w-full max-w-6xl px-4 pb-28">
           <div className="flex flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xl sm:flex-row sm:items-center" role="region" aria-label="Cookie notice">
-            <p className="flex-1 text-sm leading-relaxed text-zinc-200">{texts.cookieText} <button type="button" onClick={() => flash("Privacy policy — demo page")} className="font-semibold text-[var(--accent)]">Privacy</button></p>
+            <p className="flex-1 text-sm leading-relaxed text-zinc-200">{texts.cookieText} <button type="button" onClick={() => openLegal("privacy")} className="font-semibold text-[var(--accent)]">Privacy</button></p>
             <div className="flex gap-2.5">
               <button type="button" onClick={() => chooseCookie("ok")} className="rounded-full bg-[var(--accent)] px-7 py-2.5 font-bold text-white">OK</button>
               <button type="button" onClick={() => chooseCookie("reject")} className="rounded-full border border-[var(--border)] px-6 py-2.5 font-bold text-white">Reject</button>

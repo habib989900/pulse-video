@@ -23,9 +23,10 @@
   "packageManager": "bun@1.3.10",
   "private": true,
   "scripts": {
-    "build": "vite build",
+    "build": "tsc --noEmit -p tsconfig.server.json && vite build",
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p client/tsconfig.json"
+    "typecheck": "tsc --noEmit -p client/tsconfig.json",
+    "typecheck:server": "tsc --noEmit -p tsconfig.server.json"
   },
   "type": "module"
 }
