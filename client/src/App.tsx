@@ -1941,6 +1941,42 @@ export function App() {
   const upNext = current ? VIDEOS.filter((v) => v.id !== current.id && (v.category === current.category || v.creator === current.creator)).concat(VIDEOS.filter((v) => v.id !== current.id)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 6) : [];
   const suggested = current ? [...VIDEOS].filter((v) => v.id !== current.id && !upNext.some((u) => u.id === v.id)).sort((a, b) => b.rating - a.rating).slice(0, 5) : [];
   const moreLikeThis = current ? VIDEOS.filter((v) => v.id !== current.id && v.category === current.category).slice(0, 8) : [];
+  /* Videos matched by shared tags and title words — the section
+     below "More like this". Each shared tag scores 2, each shared
+     significant title word scores 1; ties break by views. Videos
+     already in "More like this" are left out so the section adds
+     fresh picks instead of repeating the row above. */
+  const tagTitleMatches = current ? (() => {
+    const stop = new Set(["the", "and", "with", "for", "from", "your", "you", "this", "that", "video", "videos", "free", "watch", "online", "best", "full", "part", "vol", "hd"]);
+    const words = (t: string) => t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !stop.has(w));
+    const curTags = new Set(current.tags.map((t) => t.toLowerCase()));
+    const curWords = new Set(words(current.title));
+    const seen = new Set(moreLikeThis.map((v) => v.id));
+    return VIDEOS
+      .filter((v) => v.id !== current.id && !seen.has(v.id))
+      .map((v) => {
+        const sharedTags = v.tags.filter((t) => curTags.has(t.toLowerCase())).length;
+        const sharedWords = words(v.title).filter((w) => curWords.has(w)).length;
+        return { v, score: sharedTags * 2 + sharedWords };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.v.views - a.v.views)
+      .slice(0, 6)
+      .map((x) => x.v);
+  })() : [];
+  /* Each category's cover: the most-viewed video in that category
+     (first one with a thumbnail), so the Categories tab shows the
+     popular video's thumbnail instead of a text row. */
+  const topByCategory = useMemo(() => {
+    const m = new Map<string, Video>();
+    for (const c of CATEGORIES) {
+      const pool = VIDEOS.filter((v) => v.category === c.name);
+      const withThumb = [...pool].sort((a, b) => b.views - a.views).find((v) => v.thumbnailUrl);
+      const top = withThumb ?? [...pool].sort((a, b) => b.views - a.views)[0] ?? VIDEOS.filter((v) => v.tags.includes(c.name.toLowerCase())).sort((a, b) => b.views - a.views)[0];
+      if (top) m.set(c.name, top);
+    }
+    return m;
+  }, [CATEGORIES, VIDEOS]);
   /* "Because you watch" follows the last watched video's category —
      unless that video has no real category (imports land in
      "Uncategorized"), where its first tag names the section instead,
@@ -2647,6 +2683,19 @@ export function App() {
               </section>
             )}
 
+            {tagTitleMatches.length > 0 && (
+              <section aria-label="Matched by tags and title" className="pt-9">
+                <div className="flex items-baseline justify-between">
+                  <h2 className="font-display text-lg font-black text-white sm:text-xl">Matched by tags &amp; title</h2>
+                  <button type="button" onClick={() => openListing({ kind: "tag", name: current.tags[0] ?? current.category })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
+                </div>
+                <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
+                  {tagTitleMatches.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                </div>
+                <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "tag", name: current.tags[0] ?? current.category })} />
+              </section>
+            )}
+
             <section aria-label={`Because you watch ${becauseTag}`} className="pt-9">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-display text-lg font-black text-white sm:text-xl">{texts.secBecause} {titleCase(becauseTag)}</h2>
@@ -3003,12 +3052,28 @@ export function App() {
             </nav>
             <h1 className="font-display mt-3 text-xl font-black text-white sm:text-2xl">Video Categories</h1>
             <p className="mt-1 text-[13px] text-[var(--dim)]">{CATEGORIES.length} categories</p>
-            <div className="mt-3 grid grid-cols-2 gap-x-8">
-              {CATEGORIES.map((c) => (
-                <button key={c.name} type="button" onClick={() => openListing({ kind: "category", name: c.name })} className="flex items-baseline justify-between border-b border-[var(--border)] py-3.5 text-left transition active:bg-[var(--surface)]">
-                  <span className="text-sm text-white">{c.name}</span><span className="text-xs text-[var(--dim)]">{c.count}</span>
-                </button>
-              ))}
+            <div className="mx-auto mt-3 flex w-full max-w-[760px] flex-col gap-6">
+              {CATEGORIES.map((c) => {
+                const top = topByCategory.get(c.name);
+                return (
+                  <button key={c.name} type="button" onClick={() => openListing({ kind: "category", name: c.name })} className="group block w-full text-left transition active:scale-[0.99]" aria-label={`${c.name}, ${c.count} videos`}>
+                    {top ? (
+                      <span className="relative block">
+                        <Thumb v={top} />
+                        <span className="pointer-events-none absolute inset-x-0 bottom-0 rounded-b-xl bg-gradient-to-t from-black/85 to-transparent px-4 pb-3 pt-10 text-white">
+                          <span className="font-display block text-lg font-black">{c.name}</span>
+                          <span className="text-sm text-zinc-300">{c.count} videos</span>
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-between rounded-xl bg-[var(--surface)] px-4 py-4">
+                        <span className="text-sm font-bold text-white">{c.name}</span>
+                        <span className="text-xs text-[var(--dim)]">{c.count}</span>
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <button type="button" onClick={() => flash(`All ${CATEGORIES.length} categories are shown above`)} className="mt-6 w-full rounded-full border border-[var(--border)] py-3.5 font-bold text-white">All {CATEGORIES.length} categories</button>
             <button type="button" onClick={() => goTab("creators")} className="flex w-full items-baseline justify-between border-b border-[var(--border)] py-4 text-left"><span className="text-sm text-white">Models</span><span className="text-[var(--dim)]">{CREATORS.length}</span></button>
