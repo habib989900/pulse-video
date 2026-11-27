@@ -109,6 +109,7 @@ export type AdminState = {
   addedVideos: AdminVideo[];
   overrides: Record<string, AdminVideo>;
   deletedIds: string[];
+  ads: AdsConfig;
   taxonomy: {
     categories: TaxOp;
     models: TaxOp;
@@ -117,6 +118,48 @@ export type AdminState = {
     channelsAdded: { name: string; creator: string }[];
   };
 };
+
+/* Ads the admin places from the panel. One creative per slot:
+   - preroll: shown inside the player before a video starts; the
+     viewer can skip it after `skipAfterSec` seconds (image or video).
+   - homeTop / homeBottom / videoBelow / videoBottom: banner slots on
+     the home page and the video page (image + link, or raw ad-network
+     HTML pasted by the admin — it renders as-is, exactly like the
+     network's own snippet). A slot renders nothing while disabled
+     or while it has no content. */
+export type AdCreative = {
+  enabled: boolean;
+  kind: "image" | "video" | "html";
+  mediaUrl: string;
+  linkUrl: string;
+  html: string;
+  skipAfterSec: number;
+};
+export type AdsConfig = {
+  preroll: AdCreative;
+  homeTop: AdCreative;
+  homeBottom: AdCreative;
+  videoBelow: AdCreative;
+  videoBottom: AdCreative;
+};
+const emptyAd = (kind: AdCreative["kind"] = "image"): AdCreative => ({ enabled: false, kind, mediaUrl: "", linkUrl: "", html: "", skipAfterSec: 5 });
+export const DEFAULT_ADS: AdsConfig = {
+  preroll: emptyAd("image"),
+  homeTop: emptyAd(),
+  homeBottom: emptyAd(),
+  videoBelow: emptyAd(),
+  videoBottom: emptyAd(),
+};
+/* Defensive merge for a stored creative: wrong types fall back to the
+   default instead of breaking the player or a banner slot. */
+const normAd = (d: AdCreative, p?: Partial<AdCreative>): AdCreative => ({
+  enabled: typeof p?.enabled === "boolean" ? p.enabled : d.enabled,
+  kind: p?.kind === "image" || p?.kind === "video" || p?.kind === "html" ? p.kind : d.kind,
+  mediaUrl: typeof p?.mediaUrl === "string" ? p.mediaUrl : d.mediaUrl,
+  linkUrl: typeof p?.linkUrl === "string" ? p.linkUrl : d.linkUrl,
+  html: typeof p?.html === "string" ? p.html : d.html,
+  skipAfterSec: typeof p?.skipAfterSec === "number" && Number.isFinite(p.skipAfterSec) ? Math.min(30, Math.max(0, Math.floor(p.skipAfterSec))) : d.skipAfterSec,
+});
 
 export const DEFAULT_TEXTS: Record<string, string> = {
   siteName: "Pulse Video",
@@ -160,6 +203,7 @@ export const DEFAULT_ADMIN_STATE: AdminState = {
   addedVideos: [],
   overrides: {},
   deletedIds: [],
+  ads: JSON.parse(JSON.stringify(DEFAULT_ADS)) as AdsConfig,
   taxonomy: { categories: emptyTax(), models: emptyTax(), tags: emptyTax(), channels: emptyTax(), channelsAdded: [] },
 };
 
@@ -188,6 +232,13 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
           ? Object.fromEntries(Object.entries(p.overrides).map(([k, v]) => [k, normalizeAdminVideo(v as Partial<AdminVideo> & { id: string })]))
           : {},
       deletedIds: Array.isArray(p.deletedIds) ? p.deletedIds : [],
+      ads: {
+        preroll: normAd(DEFAULT_ADS.preroll, p.ads?.preroll),
+        homeTop: normAd(DEFAULT_ADS.homeTop, p.ads?.homeTop),
+        homeBottom: normAd(DEFAULT_ADS.homeBottom, p.ads?.homeBottom),
+        videoBelow: normAd(DEFAULT_ADS.videoBelow, p.ads?.videoBelow),
+        videoBottom: normAd(DEFAULT_ADS.videoBottom, p.ads?.videoBottom),
+      },
       taxonomy: {
         categories: { ...emptyTax(), ...(p.taxonomy?.categories ?? {}) },
         models: { ...emptyTax(), ...(p.taxonomy?.models ?? {}) },
@@ -275,6 +326,7 @@ export function toSlimAdminState(admin: AdminState): AdminState {
     addedVideos: admin.addedVideos.map(slimVideo),
     overrides: Object.fromEntries(Object.entries(admin.overrides).map(([k, v]) => [k, slimVideo(v)])),
     deletedIds: [...admin.deletedIds],
+    ads: admin.ads ? JSON.parse(JSON.stringify(admin.ads)) as AdsConfig : JSON.parse(JSON.stringify(DEFAULT_ADS)) as AdsConfig,
     taxonomy: JSON.parse(JSON.stringify(admin.taxonomy)) as AdminState["taxonomy"],
   };
 }

@@ -60,6 +60,14 @@ const taxOpSchema = z.object({
   renamed: z.record(z.string(), z.string()),
   deleted: z.array(z.string()),
 });
+const adCreativeSchema = z.object({
+  enabled: z.boolean(),
+  kind: z.enum(["image", "video", "html"]),
+  mediaUrl: z.string(),
+  linkUrl: z.string(),
+  html: z.string(),
+  skipAfterSec: z.number(),
+});
 const adminStateSchema = z.object({
   texts: z.record(z.string(), z.string()),
   buttons: z.array(z.object({ id: z.string(), name: z.string(), label: z.string(), link: z.string() })),
@@ -73,6 +81,13 @@ const adminStateSchema = z.object({
   addedVideos: z.array(adminVideoSchema),
   overrides: z.record(z.string(), adminVideoSchema),
   deletedIds: z.array(z.string()),
+  ads: z.object({
+    preroll: adCreativeSchema,
+    homeTop: adCreativeSchema,
+    homeBottom: adCreativeSchema,
+    videoBelow: adCreativeSchema,
+    videoBottom: adCreativeSchema,
+  }),
   taxonomy: z.object({
     categories: taxOpSchema,
     models: taxOpSchema,

@@ -5,11 +5,11 @@
    there is no static import cycle. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildEffective, buildRobotsTxt, buildSitemapXml, dateFromDays, DEFAULT_ADMIN_STATE, DEFAULT_BUTTONS, DEFAULT_SEO,
+  buildEffective, buildRobotsTxt, buildSitemapXml, dateFromDays, DEFAULT_ADS, DEFAULT_ADMIN_STATE, DEFAULT_BUTTONS, DEFAULT_SEO,
   DEFAULT_TEXTS, emptyAdminVideo, extractEmbedSrc, fmtDur, JUNK_TAGS, parseDateValue,
   parseDuration, parseViews, videoToAdmin, VIDEOS, CATEGORIES, CREATORS, CHANNELS, TAGS,
 } from "../../lib/catalog";
-import type { AdminState, AdminVideo, Video } from "../../lib/catalog";
+import type { AdCreative, AdsConfig, AdminState, AdminVideo, Video } from "../../lib/catalog";
 import { Icon, Thumb } from "./App";
 
 /* ---------------- CSV (import / export) ---------------- */
@@ -138,6 +138,49 @@ function ACheck({ label, checked, onChange }: { label: string; checked: boolean;
   );
 }
 
+/* Every place an ad can go. The pre-roll takes an image or a video
+   file; the banner slots take an image + link or a pasted ad-network
+   snippet (HTML/script, run as-is — exactly how networks deliver). */
+const AD_SLOTS: { key: keyof AdsConfig; label: string; hint: string; kinds: AdCreative["kind"][] }[] = [
+  { key: "preroll", label: "Pre-roll — before a video plays", hint: "Shows inside the player when a viewer presses play. Skippable after the seconds below.", kinds: ["image", "video"] },
+  { key: "homeTop", label: "Home — top", hint: "Banner at the top of the home page, below the filter chips.", kinds: ["image", "html"] },
+  { key: "homeBottom", label: "Home — bottom", hint: "Banner at the bottom of the home page, above the footer.", kinds: ["image", "html"] },
+  { key: "videoBelow", label: "Video page — below the player", hint: "Banner right under the video player.", kinds: ["image", "html"] },
+  { key: "videoBottom", label: "Video page — bottom", hint: "Banner at the very bottom of the video page, below the related videos.", kinds: ["image", "html"] },
+];
+
+function AdSlotEditor({ slot, ad, onChange }: { slot: (typeof AD_SLOTS)[number]; ad: AdCreative; onChange: (patch: Partial<AdCreative>) => void }) {
+  return (
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-display text-base font-extrabold text-white">{slot.label}</h3>
+          <p className="mt-0.5 text-sm text-[var(--dim)]">{slot.hint}</p>
+        </div>
+        <ACheck label="Show this ad" checked={ad.enabled} onChange={(v) => onChange({ enabled: v })} />
+      </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <label className="block text-sm font-semibold text-zinc-200">Ad type
+          <select value={ad.kind} onChange={(e) => onChange({ kind: e.target.value as AdCreative["kind"] })} className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-3.5 py-2.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+            {slot.kinds.map((k) => <option key={k} value={k}>{k === "image" ? "Image" : k === "video" ? "Video" : "Ad network code (HTML)"}</option>)}
+          </select>
+        </label>
+        {slot.key === "preroll" && (
+          <AInput label="Skip after (seconds)" type="number" value={String(ad.skipAfterSec)} onChange={(v) => { const n = Math.min(30, Math.max(0, Math.floor(Number(v) || 0))); onChange({ skipAfterSec: n }); }} />
+        )}
+        {ad.kind !== "html" ? (
+          <>
+            <AInput label={ad.kind === "video" ? "Video file URL (mp4)" : "Image URL"} value={ad.mediaUrl} onChange={(v) => onChange({ mediaUrl: v })} placeholder="https://…" />
+            <AInput label="Click link (opens in a new tab)" value={ad.linkUrl} onChange={(v) => onChange({ linkUrl: v })} placeholder="https://…" />
+          </>
+        ) : (
+          <div className="sm:col-span-2"><ATextarea label="Ad network code (HTML / script)" value={ad.html} onChange={(v) => onChange({ html: v })} rows={4} placeholder="<script>…</script>" /></div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const TEXT_FIELDS: { key: string; label: string }[] = [
   { key: "siteName", label: "Site name" },
   { key: "logoText", label: "Logo text" },
@@ -160,6 +203,7 @@ const ADMIN_SECTIONS = [
   { id: "texts", label: "Site Text" },
   { id: "buttons", label: "Buttons" },
   { id: "seo", label: "SEO" },
+  { id: "ads", label: "Ads" },
   { id: "videos", label: "Videos" },
   { id: "taxonomy", label: "Categories / Models / Channels / Tags" },
   { id: "csv", label: "CSV Import" },
@@ -641,6 +685,22 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
                   </div>
                 );
               })()}
+            </section>
+          )}
+
+          {section === "ads" && (
+            <section aria-label="Ads">
+              <h2 className="font-display text-lg font-extrabold text-white">Ads</h2>
+              <p className="mt-1 text-sm text-[var(--dim)]">Place ads anywhere on the site. A slot shows nothing while it is off or empty. Image and video ads link to the URL you set; ad-network code runs exactly as pasted.</p>
+              <div className="mt-5 grid gap-5">
+                {AD_SLOTS.map((s) => (
+                  <AdSlotEditor key={s.key} slot={s} ad={st.ads[s.key]} onChange={(patch) => setSt({ ...st, ads: { ...st.ads, [s.key]: { ...st.ads[s.key], ...patch } } })} />
+                ))}
+              </div>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button type="button" disabled={saveDisabled} onClick={() => onSave(st)} className="rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95 disabled:opacity-40">Save ads</button>
+                <button type="button" disabled={saveDisabled} onClick={() => { const next = { ...st, ads: JSON.parse(JSON.stringify(DEFAULT_ADS)) as AdsConfig }; setSt(next); onSave(next); }} className="rounded-full border border-[var(--border)] px-6 py-3 text-sm font-bold text-white transition active:scale-95 disabled:opacity-40">Reset to default</button>
+              </div>
             </section>
           )}
 

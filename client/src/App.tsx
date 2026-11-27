@@ -6,7 +6,7 @@ import {
   buildEffective, buildRobotsTxt, buildSitemapXml, fmtDur, fmtViews, isVideoFileUrl,
   isoDateFromDays, isoDuration, parseAdminState, publicUrl, resolveEmbed, slugify,
 } from "../../lib/catalog";
-import type { AdminState, Video } from "../../lib/catalog";
+import type { AdCreative, AdminState, Video } from "../../lib/catalog";
 
 /* The admin panel is a separate chunk, loaded only when #/panel opens —
    the public site never downloads it. */
@@ -425,6 +425,63 @@ function PlayerSpinner({ label = "Loading video" }: { label?: string }) {
   );
 }
 
+/* A banner ad slot, driven by the admin Ads config. Renders nothing
+   while the slot is off or has no content: an image (linked when the
+   admin set a click URL) or raw ad-network HTML pasted by the admin,
+   which runs exactly as pasted — that is how networks deliver. */
+function AdSlot({ ad, label }: { ad: AdCreative | undefined; label: string }) {
+  if (!ad?.enabled) return null;
+  if (ad.kind === "html") {
+    if (!ad.html.trim()) return null;
+    return <div aria-label={label} className="mt-4 overflow-hidden rounded-xl" dangerouslySetInnerHTML={{ __html: ad.html }} />;
+  }
+  if (ad.kind !== "image" || !ad.mediaUrl.trim()) return null;
+  const img = <img src={ad.mediaUrl} alt="Advertisement" loading="lazy" referrerPolicy="no-referrer" className="w-full rounded-xl" />;
+  return (
+    <div aria-label={label} className="mt-4">
+      <span className="mb-1 block text-right text-[10px] font-bold uppercase tracking-wider text-[var(--dim)]">Ad</span>
+      {ad.linkUrl.trim() ? <a href={ad.linkUrl} target="_blank" rel="noopener noreferrer sponsored">{img}</a> : img}
+    </div>
+  );
+}
+
+/* The skippable pre-roll ad: image or video, filling the player box.
+   The Skip button appears only after the admin's countdown
+   (default 5s); a finished video ad also ends the pre-roll. Tapping
+   the creative opens its link in a new tab. While this shows, the
+   player underneath stays paused — the viewer cannot start the video
+   until the ad is skipped or finishes. */
+function PrerollAd({ ad, onDone }: { ad: AdCreative; onDone: () => void }) {
+  const total = Math.max(0, Math.min(30, Math.floor(ad.skipAfterSec || 5)));
+  const [left, setLeft] = useState(total);
+  useEffect(() => {
+    if (left <= 0) return;
+    const t = setTimeout(() => setLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [left]);
+  const canSkip = left <= 0;
+  const openLink = () => { if (ad.linkUrl.trim()) window.open(ad.linkUrl, "_blank", "noopener"); };
+  return (
+    <div className="absolute inset-0 z-40 flex flex-col bg-black" role="region" aria-label="Advertisement">
+      <button type="button" onClick={openLink} className="relative min-h-0 flex-1 overflow-hidden" aria-label="Advertisement — tap to open">
+        {ad.kind === "video" && ad.mediaUrl.trim() ? (
+          <video src={ad.mediaUrl} autoPlay muted playsInline onEnded={onDone} onError={() => setLeft(0)} className="h-full w-full object-contain" />
+        ) : (
+          <img src={ad.mediaUrl} alt="Advertisement" className="h-full w-full object-contain" />
+        )}
+      </button>
+      <div className="flex shrink-0 items-center justify-between bg-black px-3 py-2.5 text-white">
+        <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">Advertisement</span>
+        {canSkip ? (
+          <button type="button" onClick={onDone} className="rounded-full bg-white px-4 py-2 text-sm font-black text-black transition active:scale-95">Skip Ad</button>
+        ) : (
+          <span className="rounded-full bg-white/15 px-4 py-2 text-sm font-bold">Skip in {left}s</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* Playback speeds offered by the speed menu in both players. */
 const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
@@ -570,7 +627,7 @@ function shortcutTargetBlocked(e: KeyboardEvent): boolean {
    cookie-less request — so resolveEmbedFile resolves XNXX embeds the
    same way and they play in this same native player, starting on the
    low file, with every published resolution in the quality menu. */
-function EmbedPlayer({ v }: { v: Video }) {
+function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
   /* Embeds the resolveEmbedFile action can turn into direct files:
      freepornvideo (/embed/<id>), freepornvideos.xxx (/embed/<id>),
@@ -594,6 +651,17 @@ function EmbedPlayer({ v }: { v: Video }) {
   const [pinned, setPinned] = useState<{ url: string; label: string; hls: boolean; nonce: number } | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [retries, setRetries] = useState(0);
+  /* Skippable pre-roll ad (admin Ads config): shown once per video,
+     covering the player box, before the viewer can start playback.
+     While it shows, the video underneath stays paused and the iframe
+     fallback is not mounted at all (its own player could otherwise
+     start audio behind the ad). */
+  const [prerollDone, setPrerollDone] = useState(false);
+  const playAfterPreroll = useRef(false);
+  const prerollAd = preroll && preroll.enabled && preroll.mediaUrl.trim() && (preroll.kind === "image" || preroll.kind === "video") ? preroll : null;
+  const showPreroll = !!prerollAd && !prerollDone;
+  const showPrerollRef = useRef(showPreroll);
+  showPrerollRef.current = showPreroll;
   /* Fatal HLS network errors retry the load in place, at most twice —
      the old code retried forever and never reached the fallback. */
   const hlsNetRetries = useRef(0);
@@ -650,6 +718,7 @@ function EmbedPlayer({ v }: { v: Video }) {
     setLoaded(false); setFileFailed(false); setSelLabel(null);
     setPinned(null); setRetryNonce(0); setRetries(0); resumeRef.current = null;
     hlsNetRetries.current = 0;
+    setPrerollDone(false); playAfterPreroll.current = false;
     /* A18: leaving a video always leaves in-page expanded fullscreen,
        so the next video never starts with the player covering it. */
     collapseFullscreen();
@@ -786,6 +855,16 @@ function EmbedPlayer({ v }: { v: Video }) {
     el.volume = volume / 100; el.muted = muted; el.playbackRate = speed;
     if (Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration);
     setCurTime(el.currentTime || 0);
+    if (playAfterPreroll.current) {
+      /* Skipped the pre-roll before the stream had resolved: start
+         the video now that it can play, instead of leaving the viewer
+         on a paused poster with one more tap to go. */
+      playAfterPreroll.current = false;
+      resumeRef.current = null;
+      setStarted(true);
+      void el.play().catch(() => { /* autoplay policy — viewer taps play */ });
+      return;
+    }
     const r = resumeRef.current;
     if (!r) { setPlaying(!el.paused); return; }
     resumeRef.current = null;
@@ -794,11 +873,24 @@ function EmbedPlayer({ v }: { v: Video }) {
     else setPlaying(false);
   };
   const togglePlay = () => {
+    /* The pre-roll owns the screen while it shows: no play/pause
+       behind it (keyboard Space/K reaches here even though the
+       overlay covers the buttons). */
+    if (showPrerollRef.current) return;
     const el = videoRef.current;
     if (!el) return;
     setQMenuOpen(false);
     if (el.paused || el.ended) { setStarted(true); void el.play().catch(() => { /* autoplay policy — viewer taps again */ }); }
     else el.pause();
+  };
+  /* Skipping the pre-roll starts the video: immediately when the
+     element already exists, or as soon as it can play when the stream
+     is still resolving (see onLoadedMetadata). */
+  const skipPreroll = () => {
+    setPrerollDone(true);
+    const el = videoRef.current;
+    if (el && nativeSrc) { setStarted(true); void el.play().catch(() => { /* autoplay policy — viewer taps play */ }); }
+    else playAfterPreroll.current = true;
   };
   const seekTo = (clientX: number, bar: HTMLElement) => {
     const el = videoRef.current;
@@ -1016,7 +1108,7 @@ function EmbedPlayer({ v }: { v: Video }) {
             {posterUrl && <img src={posterUrl} alt="" referrerPolicy="no-referrer" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50" />}
             <PlayerSpinner />
           </>
-        ) : (
+        ) : showPreroll ? null : (
           <>
             {/* The pre-load poster is decoration only: it must never
                 take clicks meant for the embed's own play/pause
@@ -1036,6 +1128,7 @@ function EmbedPlayer({ v }: { v: Video }) {
             </div>
           </>
         )}
+        {showPreroll && prerollAd && <PrerollAd ad={prerollAd} onDone={skipPreroll} />}
       </div>
       {nativeSrc && multiStream && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-[var(--dim)]" role="group" aria-label="Playback quality">
@@ -1166,6 +1259,11 @@ export function App() {
   const [speed, setSpeed] = useState(1);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [artTheater, setArtTheater] = useState(false);
+  /* Skippable pre-roll for the catalog (non-embed) player: the ad
+     overlay shows on the first play tap; its Skip button starts the
+     video for real. Reset whenever another video opens. */
+  const [artPrerollShown, setArtPrerollShown] = useState(false);
+  const [artPrerollDone, setArtPrerollDone] = useState(false);
   const [artSeekHover, setArtSeekHover] = useState<{ pct: number; time: number } | null>(null);
   const artSeekBtnRef = useRef<HTMLButtonElement | null>(null);
   const artLastPointer = useRef<{ x: number; y: number } | null>(null);
@@ -1291,6 +1389,7 @@ export function App() {
   const effRef = useRef(eff);
   effRef.current = eff;
   const texts = adminState.texts;
+  const ads = adminState.ads;
   const seo = adminState.seo;
   const btnLabel = (id: string, fallback: string) => adminState.buttons.find((b) => b.id === id)?.label || fallback;
   const likes = stateQ.data?.likes ?? [];
@@ -1479,6 +1578,9 @@ export function App() {
   };
   const startPlayback = () => {
     if (!current) return;
+    /* The pre-roll owns the first play: show the ad instead of
+       starting the video; its Skip button starts playback for real. */
+    if (artPrerollPending) { if (!artPrerollShown) setArtPrerollShown(true); return; }
     /* Resuming at the very end restarts from the beginning — with the
        progress left at 100 the ticker would end playback again within
        a frame, which reads as "the resume button does nothing". */
@@ -1486,6 +1588,18 @@ export function App() {
     if (!playing) record.mutate(current.id);
     setPlaying(!playing);
   };
+  const skipArtPreroll = () => {
+    if (!current) return;
+    setArtPrerollDone(true);
+    setArtPrerollShown(false);
+    if (!playing && progress >= 100) setProgress(0);
+    if (!playing) record.mutate(current.id);
+    setPlaying(true);
+  };
+  /* A new video gets a fresh pre-roll. */
+  const artPrerollAd = ads.preroll && ads.preroll.enabled && ads.preroll.mediaUrl.trim() && (ads.preroll.kind === "image" || ads.preroll.kind === "video") ? ads.preroll : null;
+  const artPrerollPending = !!artPrerollAd && !artPrerollDone;
+  useEffect(() => { setArtPrerollShown(false); setArtPrerollDone(false); }, [current?.id]);
   /* Relative seek for the catalog (fake) player: double-tap and
      keyboard J/L and arrows. */
   const seekArtBy = (sec: number) => {
@@ -2376,10 +2490,11 @@ export function App() {
             </nav>
             <button type="button" onClick={() => flash(`More from ${current.creator} is waiting in Up next below`)} className="block w-full rounded-xl bg-[var(--surface)] px-3 py-2.5 text-left text-sm"><span className="font-display mr-2 font-black text-[var(--accent)]">WATCH MORE</span><span className="text-zinc-200">Click here for more exclusive content</span></button>
             {current.embedUrl ? (
-              <EmbedPlayer v={current} />
+              <EmbedPlayer v={current} preroll={ads.preroll} />
             ) : (
             <div ref={playerRef} onMouseMove={(e) => { artHide.poke(); artLastPointer.current = { x: e.clientX, y: e.clientY }; updateArtSeekHover(e.clientX, e.clientY); }} onTouchStart={artHide.poke} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : artTheater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : artTheater ? { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})`, width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
               <Motif v={current} big />
+              {artPrerollShown && artPrerollAd && <PrerollAd ad={artPrerollAd} onDone={skipArtPreroll} />}
               <span className="absolute inset-0 bg-black/25" aria-hidden="true" />
               <SeekFlash flash={artTap.flash} />
               {!playing && (
@@ -2417,6 +2532,8 @@ export function App() {
               </div>
             </div>
             )}
+
+            <AdSlot ad={ads.videoBelow} label="Video page ad" />
 
             <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6">
             <div className="min-w-0">
@@ -2559,6 +2676,8 @@ export function App() {
               <span aria-hidden="true">/</span>
               <span className="line-clamp-1 max-w-[55%] text-zinc-300">{current.title}</span>
             </nav>
+
+            <AdSlot ad={ads.videoBottom} label="Video page bottom ad" />
           </section>
         )}
 
@@ -2744,6 +2863,8 @@ export function App() {
               <button type="button" onClick={() => goTab("categories")} className="flex min-h-11 shrink-0 items-center text-[13px] font-bold text-[var(--accent)]">All {CATEGORIES.length}</button>
             </div>
 
+            <AdSlot ad={ads.homeTop} label="Home top ad" />
+
             {trending.length > 0 && (
             <section aria-label="Trending now" className="pt-5">
               <div className="flex items-baseline justify-between">
@@ -2842,6 +2963,8 @@ export function App() {
             <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} />
             </section>
             )}
+
+            <AdSlot ad={ads.homeBottom} label="Home bottom ad" />
 
           </>
         )}
