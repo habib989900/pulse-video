@@ -627,6 +627,27 @@ function shortcutTargetBlocked(e: KeyboardEvent): boolean {
    cookie-less request — so resolveEmbedFile resolves XNXX embeds the
    same way and they play in this same native player, starting on the
    low file, with every published resolution in the quality menu. */
+
+/* Video proxy (Cloudflare Worker pulse-video-proxy, 2026-11-27):
+   resolved streams play through the proxy so privacy browsers
+   (DuckDuckGo / Via / Soul) that block the source storage hosts as
+   third-party trackers still play them — the video then comes from a
+   neutral host, and HLS playlists are rewritten by the proxy so
+   masters, variants and segments all flow through it too. Only hosts
+   the proxy itself allows are wrapped (mirror of its allowlist);
+   anything else plays direct, and a proxied stream that errors falls
+   back to its direct URL once (see onVideoError). */
+const VIDEO_PROXY = "https://pulse-video-proxy.sakibhabib890.workers.dev/";
+const PROXY_HOSTS = /\.freepornvideo\.sex$|\.fpvcdn\.com$|\.ypncdn\.com$|\.xnxx-cdn\.com$|\.xnxx\.com$/i;
+function proxiedStreamUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:" || !PROXY_HOSTS.test(u.hostname)) return raw;
+    return VIDEO_PROXY + "?u=" + encodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
   /* Embeds the resolveEmbedFile action can turn into direct files:
@@ -648,7 +669,7 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
      labels stay stable across re-resolves while the signed URLs
      behind them rotate. null = the source's default (fast) stream. */
   const [selLabel, setSelLabel] = useState<string | null>(null);
-  const [pinned, setPinned] = useState<{ url: string; label: string; hls: boolean; nonce: number } | null>(null);
+  const [pinned, setPinned] = useState<{ url: string; directUrl: string | null; viaProxy: boolean; label: string; hls: boolean; nonce: number } | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [retries, setRetries] = useState(0);
   /* Skippable pre-roll ad (admin Ads config): shown once per video,
@@ -710,7 +731,8 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
      attach effect below drives the same <video> element. The
      playlists and their segments are served with
      Access-Control-Allow-Origin: * (verified against the live CDN),
-     so no proxy is needed. */
+     and the pinned master URL runs through the video proxy, which
+     rewrites the playlist so every segment flows through it too. */
   const nativeHls = useMemo(() => { try { return document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== ""; } catch { return false; } }, []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const resumeRef = useRef<{ t: number; playing: boolean } | null>(null);
@@ -792,7 +814,11 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
     if (!pinned || pinned.label !== chosen.label || pinned.nonce !== retryNonce) {
       const el = videoRef.current;
       if (el && pinned) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
-      setPinned({ url: chosen.url, label: chosen.label, hls: chosen.hls, nonce: retryNonce });
+      /* Play through the video proxy where the host allows it (see
+         proxiedStreamUrl); directUrl is kept so a proxy failure can
+         fall back to the direct file at the same position. */
+      const proxied = proxiedStreamUrl(chosen.url);
+      setPinned({ url: proxied, directUrl: chosen.url, viaProxy: proxied !== chosen.url, label: chosen.label, hls: chosen.hls, nonce: retryNonce });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileQ.data, selLabel, retryNonce, fileFailed, isGatedIframe]);
@@ -815,6 +841,15 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   const useHlsJs = !!pinned?.hls && !nativeHls;
   const onVideoError = () => {
     if (emb.kind === "file" || !isGatedIframe) return;
+    /* The proxy sits between the viewer and the storage host: if the
+       proxied stream itself errors, try the direct file once at the
+       same position before spending the re-resolve. */
+    if (pinned?.viaProxy && pinned.directUrl && pinned.url !== pinned.directUrl) {
+      const el = videoRef.current;
+      if (el) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
+      setPinned({ ...pinned, url: pinned.directUrl, viaProxy: false });
+      return;
+    }
     if (retries >= 1) { setFileFailed(true); return; }
     /* The signed storage URL most likely expired — re-resolve once and
        resume where the viewer was instead of dumping them into the
