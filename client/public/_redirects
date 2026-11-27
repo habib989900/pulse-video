@@ -1,0 +1,9 @@
+# Cloudflare Pages proxy rules: the static site is served by Pages,
+# but every server route is handled by the backend Worker. A 200
+# rule proxies the request (method, body and headers included) to
+# the Worker, so the client keeps calling same-origin /api/actions
+# exactly as it did on Vercel.
+/api/* https://pulse-video-api.sakibhabib890.workers.dev/api/:splat 200
+/sitemap.xml https://pulse-video-api.sakibhabib890.workers.dev/sitemap.xml 200
+/robots.txt https://pulse-video-api.sakibhabib890.workers.dev/robots.txt 200
+/video/* https://pulse-video-api.sakibhabib890.workers.dev/video/:splat 200

@@ -1,0 +1,15 @@
+name = "pulse-video-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-27"
+
+# KV namespace holding the site's data documents (same three files the
+# Vercel Blob store held). Created 2026-11-27 via the Cloudflare API.
+[[kv_namespaces]]
+binding = "PV_DATA"
+id = "f5a6839af3db4a86b3eaebe0d4f8da1f"
+
+[vars]
+# Public origin of the Pages site (used for sitemap links, canonical
+# video URLs and the /video/:id shell fetch). Update if the Pages
+# project gets a different subdomain.
+PUBLIC_ORIGIN = "https://pulse-video.pages.dev"
