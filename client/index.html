@@ -36,15 +36,6 @@
     <meta property="og:description" content="Watch free videos in HD — trending, latest and top rated videos, models and channels, updated daily." />
     <meta property="og:image" content="/og-image.svg" />
     <link rel="preconnect" href="https://www.freepornvideo.sex" />
-    <!-- Preload the two Archivo weights the above-fold text uses (900
-         for headings/logo, 600 for tabs/chips/titles) so the font
-         arrives before first paint instead of swapping in late and
-         shifting every text block — the CLS 0.39 seen in one PageSpeed
-         run. The filenames are the content hashes emitted by
-         @fontsource/archivo 5.3.0; if that package is upgraded, update
-         these two names to the new files in dist/assets/. -->
-    <link rel="preload" href="/assets/archivo-latin-900-normal-D5FQlLQC.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/assets/archivo-latin-600-normal-3BBy0ZsW.woff2" as="font" type="font/woff2" crossorigin />
     <!-- Boot-prefetch the public catalog (slim admin state) while the
          JS bundle is still downloading: the home page cannot render
          its first card until this arrives, and waiting for React to

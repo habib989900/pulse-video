@@ -3113,9 +3113,17 @@ export function App() {
         <div role="status" className="fixed inset-x-4 bottom-24 z-[70] mx-auto max-w-md rounded-xl bg-white px-4 py-3 text-center text-sm font-semibold text-black shadow-xl md:bottom-28">{notice}</div>
       )}
 
-      {/* ===== Cookie banner (in-flow above the footer, choice persists — never overlays content) ===== */}
+      {/* ===== Cookie banner (fixed overlay above the bottom tab bar) =====
+          PageSpeed 2026-11-27: the in-flow banner caused the ENTIRE
+          0.39 CLS — it paints in the viewport while the home sections
+          are still loading, then gets pushed down as they render above
+          it. Fixed positioning takes it out of the flow, so it can
+          appear or be dismissed without moving anything. It sits above
+          the tab bar (bottom-24, same as the notice toast) and overlays
+          the page's bottom padding while visible, like every cookie
+          banner; the choice still persists. */}
       {!cookieChoice && (
-        <div className="mx-auto w-full max-w-6xl px-4 pb-28">
+        <div className="fixed inset-x-0 bottom-24 z-[60] mx-auto w-full max-w-6xl px-4">
           <div className="flex flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xl sm:flex-row sm:items-center" role="region" aria-label="Cookie notice">
             <p className="flex-1 text-sm leading-relaxed text-zinc-200">{texts.cookieText} <button type="button" onClick={() => openLegal("privacy")} className="font-semibold text-[var(--accent)]">Privacy</button></p>
             <div className="flex gap-2.5">
