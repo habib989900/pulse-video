@@ -608,17 +608,27 @@ function shortcutTargetBlocked(e: KeyboardEvent): boolean {
    both into one ascending list (MP4 wins at a shared height) and the
    playlist streams play through hls.js where the browser has no
    native HLS. Switching streams keeps the viewer's place.
+   Attempt order (owner's rule, 2026-11-28): a video is tried as m3u8
+   first, then mp4, and only then the source's embed player — inside
+   each format the resolution closest to 480p goes first, so playback
+   still starts at the familiar fast quality. A stream that errors
+   moves to the next untried stream in that order (proxied, then
+   direct); the embed iframe is the last resort, after every stream
+   has failed and one re-resolve. A source with no playlists
+   (freepornvideo, freepornvideos.xxx) simply starts at its mp4.
    Stability: the playing URL is PINNED in state — every like/save/history
    save invalidates all queries server-side, and each fresh resolve mints
    a new signed URL; feeding that straight into <video src> restarted
    playback from zero mid-watch. A refetch may only replace the pinned
-   URL after the viewer switches quality or the pinned file errors (a
+   URL after the viewer switches quality, the chain moves to the next
+   stream, or the one re-resolve after the chain is exhausted (a
    signed URL can expire mid-watch): then the player re-resolves once,
-   resumes at the same position, and only after a second failure falls
-   back to the source iframe — sandboxed without top-navigation or
-   popups, so the embed's ad scripts cannot throw the viewer off the
-   page. Under the iframe a bar opens the same embed in a new tab
-   (first-party there, so its cookies work).
+   re-arms the chain from its first stream, resumes at the same
+   position, and only when the chain is exhausted again falls back to
+   the source iframe — sandboxed without top-navigation or popups, so
+   the embed's ad scripts cannot throw the viewer off the page. Under
+   the iframe a bar opens the same embed in a new tab (first-party
+   there, so its cookies work).
    XNXX embeds (added 2026-11-26, after the owner hit its "Blocked
    content. Contact the site owner to fix" refusal on a newly added
    video): that host's player blocks playback inside third-party frames
@@ -647,6 +657,14 @@ function proxiedStreamUrl(raw: string): string {
   } catch {
     return raw;
   }
+}
+/* Resolution height behind a stream label ("480p" → 480, "4k" →
+   2160); labels with no height ("Original") sort last. */
+function streamHeight(label: string): number {
+  const m = label.match(/(\d{3,4})p/);
+  if (m && m[1]) return parseInt(m[1], 10);
+  if (/4k/i.test(label)) return 2160;
+  return Number.POSITIVE_INFINITY;
 }
 function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
@@ -686,6 +704,19 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   /* Fatal HLS network errors retry the load in place, at most twice —
      the old code retried forever and never reached the fallback. */
   const hlsNetRetries = useRef(0);
+  /* Labels already attempted for this video in the m3u8 → mp4 chain:
+     a stream that errored is never tried twice in one pass. Reset per
+     video (see the v.id effect) and when a re-resolve mints fresh
+     signed URLs for every stream. */
+  const triedLabelsRef = useRef<Set<string>>(new Set());
+  /* A re-resolve mints fresh signed URLs, but the pinned-stream effect
+     would otherwise adopt the chain's first stream from the STALE data
+     the moment the retry nonce changes (a background refetch keeps the
+     old data until it lands). While armed, adoption waits until the
+     query's data is actually newer than the data the failure came
+     from; if the re-resolve itself fails, the player goes to the
+     embed instead of waiting forever. */
+  const freshAdoptRef = useRef<{ armed: boolean; dataAt: number }>({ armed: false, dataAt: 0 });
   /* Custom control-bar state for the native player. The video element
      no longer uses the browser's built-in controls: their fullscreen
      button (bottom-right of the bar, next to the volume icon — the one
@@ -740,6 +771,8 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
     setLoaded(false); setFileFailed(false); setSelLabel(null);
     setPinned(null); setRetryNonce(0); setRetries(0); resumeRef.current = null;
     hlsNetRetries.current = 0;
+    triedLabelsRef.current = new Set();
+    freshAdoptRef.current = { armed: false, dataAt: 0 };
     setPrerollDone(false); playAfterPreroll.current = false;
     /* A18: leaving a video always leaves in-page expanded fullscreen,
        so the next video never starts with the player covering it. */
@@ -795,18 +828,53 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
        a genuinely unresolvable embed still falls back after them. */
     retry: 2,
   });
+  /* Attempt order (owner's rule, 2026-11-28): a video is tried as
+     m3u8 first, then mp4, and only then the source's embed player.
+     Inside each format the resolution closest to 480p goes first, so
+     playback still starts at the familiar fast quality. This order
+     drives only the automatic chain (first stream + what an error
+     moves to next); the quality menu still lists every stream the
+     source offers, in the source's own order. */
+  const attemptOrder = useMemo(() => {
+    const list = fileQ.data?.streams ?? [];
+    const byFormat = (a: (typeof list)[number], b: (typeof list)[number]) =>
+      (a.hls === b.hls ? 0 : a.hls ? -1 : 1) ||
+      Math.abs(streamHeight(a.label) - 480) - Math.abs(streamHeight(b.label) - 480) ||
+      streamHeight(a.label) - streamHeight(b.label);
+    return [...list].sort(byFormat);
+  }, [fileQ.data]);
   /* Pin the stream the viewer actually watches. A background refetch
      (likes, saves and history all invalidate every query) returns a
      freshly signed URL for the same file — swapping it in would restart
-     playback, so a new URL is adopted only for a quality switch or for
-     the one retry after the pinned file errored. */
+     playback, so a new URL is adopted only for a quality switch, for
+     the next stream in the m3u8 → mp4 chain after an error, or for the
+     one re-resolve after the chain is exhausted (whose fresh URLs are
+     adopted only once the new data has actually landed — see
+     freshAdoptRef). */
   useEffect(() => {
     if (!isGatedIframe || fileFailed) return;
+    /* A re-resolve that itself failed leaves no fresh data to adopt:
+       the embed player is the last resort, not an endless wait. */
+    if (freshAdoptRef.current.armed && fileQ.isError) {
+      freshAdoptRef.current = { armed: false, dataAt: 0 };
+      setFileFailed(true);
+      return;
+    }
     const d = fileQ.data;
     if (!d) return;
+    /* While a re-resolve is in flight, do not adopt from the stale
+       data the nonce bump just exposed — wait for the fresh data. */
+    if (freshAdoptRef.current.armed && !(fileQ.dataUpdatedAt > freshAdoptRef.current.dataAt)) return;
+    if (freshAdoptRef.current.armed) {
+      /* Fresh data landed after the re-resolve: the chain restarts
+         from its first stream with the fresh URLs. */
+      freshAdoptRef.current = { armed: false, dataAt: 0 };
+      triedLabelsRef.current = new Set();
+    }
     const list = d.streams.length > 0 ? d.streams : d.fileUrl ? [{ url: d.fileUrl, label: d.fastLabel ?? "Video", hls: false }] : [];
     if (list.length === 0) return;
-    const chosen = list.find((s) => s.label === selLabel) ?? list.find((s) => s.url === d.fileUrl) ?? list[0];
+    const order = attemptOrder.length > 0 ? attemptOrder : list;
+    const chosen = list.find((s) => s.label === selLabel) ?? order.find((s) => !triedLabelsRef.current.has(s.label)) ?? order[0];
     if (!chosen) return;
     /* Adopt the pin when the retry nonce changed even if the URL is
        identical (a re-resolve mints a fresh signed URL for the same
@@ -814,6 +882,7 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
     if (!pinned || pinned.label !== chosen.label || pinned.nonce !== retryNonce) {
       const el = videoRef.current;
       if (el && pinned) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
+      triedLabelsRef.current.add(chosen.label);
       /* Play through the video proxy where the host allows it (see
          proxiedStreamUrl); directUrl is kept so a proxy failure can
          fall back to the direct file at the same position. */
@@ -821,7 +890,7 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
       setPinned({ url: proxied, directUrl: chosen.url, viaProxy: proxied !== chosen.url, label: chosen.label, hls: chosen.hls, nonce: retryNonce });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileQ.data, selLabel, retryNonce, fileFailed, isGatedIframe]);
+  }, [fileQ.data, fileQ.isError, selLabel, retryNonce, fileFailed, isGatedIframe, attemptOrder]);
   if (!emb) return null;
   /* A video-file "thumbnail" (XNXX preview.mp4) is not a usable poster
      or <img> — browsers reject it as a poster and error it as an image.
@@ -843,19 +912,36 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
     if (emb.kind === "file" || !isGatedIframe) return;
     /* The proxy sits between the viewer and the storage host: if the
        proxied stream itself errors, try the direct file once at the
-       same position before spending the re-resolve. */
+       same position before moving on to the next format. */
     if (pinned?.viaProxy && pinned.directUrl && pinned.url !== pinned.directUrl) {
       const el = videoRef.current;
       if (el) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
       setPinned({ ...pinned, url: pinned.directUrl, viaProxy: false });
       return;
     }
+    /* m3u8 → mp4 → embed (owner's rule, 2026-11-28): the pinned
+       stream failed, so move to the next stream the source offers
+       that has not been tried yet — every playlist first, then every
+       file — resuming at the same position. Only when every stream
+       has failed does the player spend its one re-resolve, and only
+       after that the source's embed player. */
+    if (pinned) triedLabelsRef.current.add(pinned.label);
+    const next = attemptOrder.find((s) => !triedLabelsRef.current.has(s.label));
+    if (next) {
+      const el = videoRef.current;
+      if (el) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
+      setSelLabel(next.label);
+      return;
+    }
     if (retries >= 1) { setFileFailed(true); return; }
     /* The signed storage URL most likely expired — re-resolve once and
        resume where the viewer was instead of dumping them into the
-       iframe (or worse, restarting the video from the beginning). */
+       iframe (or worse, restarting the video from the beginning). The
+       fresh resolve re-arms the whole chain from its first stream. */
     const el = videoRef.current;
     if (el) resumeRef.current = { t: el.currentTime || 0, playing: !el.paused };
+    freshAdoptRef.current = { armed: true, dataAt: fileQ.dataUpdatedAt ?? 0 };
+    setSelLabel(null);
     setRetries(1);
     setRetryNonce((n) => n + 1);
     void queryClient.invalidateQueries({ queryKey: ["embedFile", v.id] });
