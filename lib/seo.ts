@@ -109,6 +109,9 @@ export function buildVideoPageMeta(base: string, v: Video, brand: string): Video
     ...(v.embedUrl ? { embedUrl: resolveEmbed(v.embedUrl).src } : {}),
     ...(v.hasViews ? { interactionStatistic: { "@type": "InteractionCounter", interactionType: { "@type": "WatchAction" }, userInteractionCount: v.views } } : {}),
     ...(v.creator ? { actor: { "@type": "Person", name: v.creator } } : {}),
+    /* .xxx's sitemap carries a 0-5 rating; the same value belongs on
+       the VideoObject as an AggregateRating (rating is stored 0-100). */
+    ...(v.hasRating && v.rating > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: Number((v.rating / 20).toFixed(1)), bestRating: 5 } } : {}),
     inLanguage: "en",
     isFamilyFriendly: false,
     genre: v.category,

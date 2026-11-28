@@ -520,6 +520,45 @@ function AdSlot({ ad, label }: { ad: AdCreative | undefined; label: string }) {
    the creative opens its link in a new tab. While this shows, the
    player underneath stays paused — the viewer cannot start the video
    until the ad is skipped or finishes. */
+/* Share popup like the reference site's "Share with socials": five
+   social links plus a copyable link to the video page. The shared URL
+   is the canonical /video/<id> page, which carries server meta. */
+function ShareModal({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const u = encodeURIComponent(url);
+  const t = encodeURIComponent(title);
+  const links = [
+    { name: "X", href: `https://twitter.com/intent/tweet?url=${u}&text=${t}` },
+    { name: "WhatsApp", href: `https://wa.me/?text=${t}%20${u}` },
+    { name: "Reddit", href: `https://www.reddit.com/submit?url=${u}&title=${t}` },
+    { name: "Telegram", href: `https://t.me/share/url?url=${u}&text=${t}` },
+    { name: "Tumblr", href: `https://www.tumblr.com/widgets/share/tool?canonicalUrl=${u}&title=${t}` },
+  ];
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-4 sm:items-center" role="dialog" aria-modal="true" aria-label="Share with socials" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] p-5 text-white shadow-2xl ring-1 ring-white/10" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-lg font-black">Share with socials</h2>
+          <button type="button" aria-label="Close share" onClick={onClose} className="p-1.5 transition active:scale-90"><Icon n="x" size={20} /></button>
+        </div>
+        <div className="mt-4 grid grid-cols-5 gap-2">
+          {links.map((l) => (
+            <a key={l.name} href={l.href} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-1.5 rounded-xl bg-[var(--surface2)] px-1 py-3 text-xs font-bold transition active:scale-95">{l.name}</a>
+          ))}
+        </div>
+        <p className="mt-5 text-sm font-bold text-[var(--dim)]">Link to this video</p>
+        <div className="mt-2 flex items-center gap-2">
+          <input readOnly value={url} aria-label="Video link" className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--surface2)] px-3 py-2.5 text-sm text-white focus:outline-none" />
+          <button type="button" onClick={copy} className="shrink-0 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-bold text-white transition active:scale-95">{copied ? "Copied" : "Copy"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrerollAd({ ad, onDone }: { ad: AdCreative; onDone: () => void }) {
   const total = Math.max(0, Math.min(30, Math.floor(ad.skipAfterSec || 5)));
   const [left, setLeft] = useState(total);
@@ -735,7 +774,7 @@ function streamHeight(label: string): number {
   if (/4k/i.test(label)) return 2160;
   return Number.POSITIVE_INFINITY;
 }
-function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
+function EmbedPlayer({ v, preroll, pauseBanner }: { v: Video; preroll?: AdCreative; pauseBanner?: AdCreative }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
   /* Embeds the resolveEmbedFile action can turn into direct files:
      freepornvideo (/embed/<id>), freepornvideos.xxx (/embed/<id>),
@@ -771,6 +810,10 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
      fallback is not mounted at all (its own player could otherwise
      start audio behind the ad). */
   const [prerollDone, setPrerollDone] = useState(false);
+  /* Pause banner: which video the viewer dismissed it for. Per-video,
+     so it shows again on the next video (and on the next pause after a
+     resume — the banner only renders while paused). */
+  const [pauseAdDismissedFor, setPauseAdDismissedFor] = useState<string | null>(null);
   const playAfterPreroll = useRef(false);
   const prerollAd = preroll && preroll.enabled && preroll.mediaUrl.trim() && (preroll.kind === "image" || preroll.kind === "video") ? preroll : null;
   const showPreroll = !!prerollAd && !prerollDone;
@@ -1242,6 +1285,25 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
                 <Icon n="play" size={28} />
               </button>
             )}
+            {/* Pause banner ad, like the reference site's pause overlay:
+                shows over the player while paused (never before the
+                first play, never during the pre-roll), with a close
+                button; closing it reveals the resume button. */}
+            {!playing && started && pauseBanner?.enabled && pauseAdDismissedFor !== v.id && (pauseBanner.kind === "image" ? pauseBanner.mediaUrl.trim() : pauseBanner.kind === "html" ? pauseBanner.html.trim() : "") && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-label="Advertisement" onClick={() => setPauseAdDismissedFor(v.id)}>
+                <div className="relative w-full max-w-md overflow-hidden rounded-xl bg-black ring-1 ring-white/20" onClick={(e) => e.stopPropagation()}>
+                  <span className="absolute left-2 top-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">Ad</span>
+                  <button type="button" aria-label="Close ad" onClick={() => setPauseAdDismissedFor(v.id)} className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white transition active:scale-90"><Icon n="x" size={18} /></button>
+                  {pauseBanner.kind === "html" ? (
+                    <div className="overflow-hidden" dangerouslySetInnerHTML={{ __html: pauseBanner.html }} />
+                  ) : pauseBanner.linkUrl.trim() ? (
+                    <a href={pauseBanner.linkUrl} target="_blank" rel="noopener noreferrer sponsored"><img src={pauseBanner.mediaUrl} alt="Advertisement" loading="lazy" referrerPolicy="no-referrer" className="max-h-[60vh] w-full object-contain" /></a>
+                  ) : (
+                    <img src={pauseBanner.mediaUrl} alt="Advertisement" loading="lazy" referrerPolicy="no-referrer" className="max-h-[60vh] w-full object-contain" />
+                  )}
+                </div>
+              </div>
+            )}
             {/* The site's own control bar. Its fullscreen button sits at
                 the bar's right end, next to the volume control — exactly
                 where the browser's (policy-greyed) button used to be —
@@ -1448,6 +1510,11 @@ export function App() {
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
   const [suggOpen, setSuggOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false);
+  /* Feed-listing period filter, like the reference site's period
+     dropdowns (All Time / This Week / Today). Resets on navigation. */
+  const [listPeriod, setListPeriod] = useState<"all" | "today" | "week" | "month">("all");
   const queryRef = useRef(query);
   queryRef.current = query;
   const [, setFeed] = useState<(typeof FEED_TABS)[number]>("For you");
@@ -1498,6 +1565,7 @@ export function App() {
   const [appliedFilters, setAppliedFilters] = useState<Filters>(NO_FILTERS);
   const [listPage, setListPage] = useState(1);
   const [bioOpen, setBioOpen] = useState(false);
+  useEffect(() => { setListPeriod("all"); }, [listing]);
   const [searchDraft, setSearchDraft] = useState("");
   const [notFound, setNotFound] = useState(false);
   /* Route waiting on the admin catalog: a direct link to an imported
@@ -1600,6 +1668,7 @@ export function App() {
   const saves = stateQ.data?.saves ?? [];
   const follows = stateQ.data?.follows ?? [];
   const history = stateQ.data?.history ?? [];
+  const dislikes = stateQ.data?.dislikes ?? [];
 
   /* ---- Admin save honesty + stale-panel tracking (A4/A23/A1/A12) ---- */
   const [saveError, setSaveError] = useState("");
@@ -1660,10 +1729,32 @@ export function App() {
   }, [adminView]);
 
   const toggle = useMutation({
-    mutationFn: async (a: { kind: "like" | "save" | "follow"; itemKey: string }) => await api.toggleInteraction(a),
+    mutationFn: async (a: { kind: "like" | "save" | "follow" | "dislike"; itemKey: string }) => await api.toggleInteraction(a),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["state"] }),
     onError: (e) => setNotice(e instanceof Error ? e.message : "Something went wrong"),
   });
+  /* Download the current video's file: the resolve is shared with the
+     player's own query (same key), so this costs no extra fetch once
+     the player has resolved. Prefers 720p, else the highest MP4. The
+     file opens in a new tab — Vercel cannot force a download, so the
+     browser's own player there is where the viewer saves it. */
+  const downloadCurrent = async () => {
+    if (!current?.embedUrl || dlBusy) return;
+    setDlBusy(true);
+    try {
+      const emb = resolveEmbed(current.embedUrl);
+      const res = await qc.fetchQuery({ queryKey: ["embedFile", current.id], queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }) });
+      const mp4s = (res.streams ?? []).filter((st) => !st.hls);
+      const pick = mp4s.find((st) => st.label === "720p") ?? [...mp4s].sort((a, b) => streamHeight(b.label) - streamHeight(a.label))[0];
+      const url = pick?.url ?? res.fileUrl;
+      if (!url) { flash("No downloadable file for this video"); return; }
+      const a = document.createElement("a");
+      a.href = url; a.target = "_blank"; a.rel = "noopener";
+      a.download = `${slugify(current.title)}-${pick?.label ?? "video"}.mp4`;
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch { flash("Could not get the download link — try again"); }
+    finally { setDlBusy(false); }
+  };
   const record = useMutation({
     mutationFn: async (itemKey: string) => await api.recordHistory({ itemKey }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["state"] }),
@@ -2245,17 +2336,26 @@ export function App() {
   }, [VIDEOS, likes, saves, history, follows]);
 
   const listingVideos = (l: Listing): Video[] => {
-    if (l.kind === "search") { const q = l.name.toLowerCase(); return VIDEOS.filter((v) => v.title.toLowerCase().includes(q) || v.category.toLowerCase() === q || v.tags.some((t) => t.includes(q)) || v.creator.toLowerCase().includes(q)); }
+    if (l.kind === "search") { /* The listing name comes from the URL slug, so "k-pop" arrives as "K Pop" (space) while titles keep the hyphen — normalise hyphens to spaces on both sides. (Sorting is the existing sortBy dropdown below.) */
+      const norm = (s: string) => s.toLowerCase().replace(/-/g, " ");
+      const q = norm(l.name);
+      return VIDEOS.filter((v) => norm(v.title).includes(q) || norm(v.category) === q || v.tags.some((t) => norm(t).includes(q)) || norm(v.creator).includes(q)); }
     if (l.kind === "tag") { const q = l.name.toLowerCase(); return VIDEOS.filter((v) => v.tags.includes(q) || v.category.toLowerCase() === q); }
     if (l.kind === "category") return VIDEOS.filter((v) => v.category === l.name || v.tags.includes(l.name.toLowerCase()));
     if (l.kind === "creator") return VIDEOS.filter((v) => v.creator === l.name);
     if (l.kind === "channel") { const ch = CHANNELS.find((c) => c.name === l.name); return ch ? VIDEOS.filter((v) => v.creator === ch.creator || v.channel === ch.name) : []; }
-    if (l.name === "Recommended") return recommendedList;
-    if (l.name === "Trending") return [...VIDEOS].sort((a, b) => b.views - a.views);
-    if (l.name === "New") return [...VIDEOS].sort((a, b) => a.days - b.days);
-    if (l.name === "Top rated") return [...VIDEOS].sort((a, b) => b.rating - a.rating);
-    if (l.name === "Longest") return [...VIDEOS].sort((a, b) => b.durationSec - a.durationSec);
-    return VIDEOS;
+    let feed: Video[];
+    if (l.name === "Recommended") feed = recommendedList;
+    else if (l.name === "Trending") feed = [...VIDEOS].sort((a, b) => b.views - a.views);
+    else if (l.name === "New") feed = [...VIDEOS].sort((a, b) => a.days - b.days);
+    else if (l.name === "Top rated") feed = [...VIDEOS].sort((a, b) => b.rating - a.rating);
+    else if (l.name === "Longest") feed = [...VIDEOS].sort((a, b) => b.durationSec - a.durationSec);
+    else return VIDEOS;
+    /* Period filter (feed listings only): days is 0 for today's videos. */
+    if (listPeriod === "today") return feed.filter((v) => v.days <= 0);
+    if (listPeriod === "week") return feed.filter((v) => v.days <= 7);
+    if (listPeriod === "month") return feed.filter((v) => v.days <= 30);
+    return feed;
   };
   const listingCount = (_l: Listing, list: Video[]): string => `${list.length} video${list.length === 1 ? "" : "s"}`;
   const listingHeading = (l: Listing): string => {
@@ -2326,7 +2426,7 @@ export function App() {
       historyView ? "History - pulsevideo" :
       current ? (current.seoTitle || `${current.title} | ${brand}`) :
       listing ? (listing.kind === "feed"
-        ? `${listing.name === "Trending" ? "Top Trending Videos" : listing.name === "Top rated" ? "Top Rated Collection" : listing.name === "New" ? "Just Added Videos" : "Longest Videos"} | ${brand}`
+        ? `${listing.name === "Trending" ? "Top Trending Videos" : listing.name === "Top rated" ? "Top Rated Collection" : listing.name === "New" ? "Just Added Videos" : listing.name === "Recommended" ? "Recommended Videos" : "Longest Videos"} | ${brand}`
         : listing.kind === "tag" ? `Tag: ${listing.name} — Videos | ${brand}`
         : listing.kind === "search" ? `Search: ${listing.name} | ${brand}`
         : listing.kind === "creator" ? `${listing.name} Videos — Model | ${brand}`
@@ -2825,8 +2925,9 @@ export function App() {
               <span className="line-clamp-1 max-w-[55%] text-zinc-300">{current.title}</span>
             </nav>
             <button type="button" onClick={() => flash(`More from ${current.creator} is waiting in Up next below`)} className="block w-full rounded-xl bg-[var(--surface)] px-3 py-2.5 text-left text-sm"><span className="font-display mr-2 font-black text-[var(--accent)]">WATCH MORE</span><span className="text-zinc-200">Click here for more exclusive content</span></button>
+            <AdSlot ad={ads.videoTop} label="Video page top ad" />
             {current.embedUrl ? (
-              <EmbedPlayer v={current} preroll={ads.preroll} />
+              <EmbedPlayer v={current} preroll={ads.preroll} pauseBanner={ads.pauseBanner} />
             ) : (
             <div ref={playerRef} onMouseMove={(e) => { artHide.poke(); artLastPointer.current = { x: e.clientX, y: e.clientY }; updateArtSeekHover(e.clientX, e.clientY); }} onTouchStart={artHide.poke} className={`pv-darkzone pv-fs relative overflow-hidden ${artFs.expanded ? "fixed inset-0 z-[85] m-0 h-[100dvh] w-full bg-black" : artTheater ? "mt-3 rounded-none" : "-mx-4 mt-3 sm:mx-0 sm:rounded-xl"}`} style={artFs.expanded ? (artFs.rotated ? { width: "100dvh", height: "100dvw", left: "50%", top: "50%", transform: "translate(-50%, -50%) rotate(90deg)", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` } : { background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }) : artTheater ? { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})`, width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" } : { aspectRatio: "16/9", background: `linear-gradient(135deg, ${current.g[0]}, ${current.g[1]})` }}>
               <Motif v={current} big />
@@ -2881,14 +2982,16 @@ export function App() {
             </p>
 
             <div className="no-scrollbar mt-3 flex items-center gap-3 overflow-x-auto border-b border-[var(--border)] pb-3 text-white [&>button]:shrink-0">
-              <button type="button" aria-label="Like video" aria-pressed={likes.includes(current.id)} onClick={() => toggle.mutate({ kind: "like", itemKey: current.id })} className={`flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90 ${likes.includes(current.id) ? "text-[var(--accent)]" : ""}`}><Icon n="like" size={19} tone="accent" /><span className="text-sm font-semibold">{btnLabel("like", "Like")}</span></button>
-              <button type="button" aria-label="Dislike video" onClick={() => flash("Thanks for the feedback")} className="flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90"><Icon n="dislike" size={19} tone="accent" /><span className="text-sm font-semibold">Dislike</span></button>
+              <button type="button" aria-label="Like video" aria-pressed={likes.includes(current.id)} onClick={() => { toggle.mutate({ kind: "like", itemKey: current.id }); if (dislikes.includes(current.id)) toggle.mutate({ kind: "dislike", itemKey: current.id }); }} className={`flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90 ${likes.includes(current.id) ? "text-[var(--accent)]" : ""}`}><Icon n="like" size={19} tone="accent" /><span className="text-sm font-semibold">{btnLabel("like", "Like")}</span></button>
+              <button type="button" aria-label="Dislike video" aria-pressed={dislikes.includes(current.id)} onClick={() => { toggle.mutate({ kind: "dislike", itemKey: current.id }); if (likes.includes(current.id)) toggle.mutate({ kind: "like", itemKey: current.id }); }} className={`flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90 ${dislikes.includes(current.id) ? "text-[var(--accent)]" : ""}`}><Icon n="dislike" size={19} tone="accent" /><span className="text-sm font-semibold">Dislike</span></button>
               <button type="button" aria-label="Save to Watch later" aria-pressed={saves.includes(current.id)} onClick={() => toggle.mutate({ kind: "save", itemKey: current.id })} className={`flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90 ${saves.includes(current.id) ? "text-[var(--accent)]" : ""}`}><Icon n="bookmark" size={19} tone="accent" /><span className="text-sm font-semibold">{btnLabel("save", "Save")}</span></button>
               <button type="button" aria-label="Add to playlist" onClick={() => { if (!saves.includes(current.id)) toggle.mutate({ kind: "save", itemKey: current.id }); flash("Added to your Watch later playlist"); }} className="flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90"><Icon n="list" size={19} tone="accent" /><span className="text-sm font-semibold">Playlist</span></button>
-              <button type="button" aria-label="Share video" onClick={() => flash("Link ready — use your browser's share menu to send it")} className="p-2 transition active:scale-90"><Icon n="share" size={20} tone="accent" /></button>
+              <button type="button" aria-label="Download video" aria-disabled={dlBusy} onClick={() => void downloadCurrent()} className="flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90 disabled:opacity-50"><Icon n="download" size={19} tone="accent" /><span className="text-sm font-semibold">{dlBusy ? "Getting link…" : "Download"}</span></button>
+              <button type="button" aria-label="Share video" onClick={() => setShareOpen(true)} className="p-2 transition active:scale-90"><Icon n="share" size={20} tone="accent" /></button>
               <button type="button" aria-label="Comments" onClick={() => setCommentsOpen(!commentsOpen)} className="flex items-center gap-1 p-2 transition active:scale-90"><Icon n="comment" size={20} tone="accent" /><span className="text-sm font-semibold">2</span></button>
               <button type="button" aria-label="Report video" onClick={() => flash("Thanks — our team will take a look")} className="flex items-center gap-1.5 rounded-full bg-[var(--surface2)] px-3.5 py-2 transition active:scale-90"><Icon n="flag" size={19} tone="accent" /><span className="text-sm font-semibold">Report</span></button>
             </div>
+            {shareOpen && current && <ShareModal url={`${window.location.origin}/video/${current.id}`} title={current.title} onClose={() => setShareOpen(false)} />}
 
             {current.creator && (
             <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -3094,6 +3197,14 @@ export function App() {
               <button type="button" onClick={() => listingBack(listing)} className="mt-3 rounded-full border border-[var(--border)] px-4 py-2 text-sm font-bold text-white transition active:scale-95">← Back to {listingSegment(listing)}</button>
               <h1 className="font-display mt-4 text-xl font-black capitalize leading-tight text-white sm:text-2xl">{heading}</h1>
               <p className="mt-1 text-[13px] text-[var(--dim)]">{listingCount(listing, list)}{listing.kind === "creator" && creatorInfo ? ` · ${creatorInfo.followers} followers` : ""}</p>
+              {listing.kind === "feed" && (
+                <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Period filter">
+                  <span className="text-sm font-semibold text-[var(--dim)]">Period:</span>
+                  {(["all", "today", "week", "month"] as const).map((p) => (
+                    <button key={p} type="button" aria-pressed={listPeriod === p} onClick={() => { setListPeriod(p); setListPage(1); }} className={`rounded-full px-3.5 py-1.5 text-sm font-semibold transition active:scale-95 ${listPeriod === p ? "bg-[var(--accent)] text-white" : "bg-[var(--surface2)] text-zinc-200"}`}>{p === "all" ? "All time" : p === "today" ? "Today" : p === "week" ? "This week" : "This month"}</button>
+                  ))}
+                </div>
+              )}
 
               {listing.kind === "search" && (
                 <>

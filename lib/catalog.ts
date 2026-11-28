@@ -144,6 +144,8 @@ export type AdsConfig = {
   homeBottom: AdCreative;
   videoBelow: AdCreative;
   videoBottom: AdCreative;
+  videoTop: AdCreative;
+  pauseBanner: AdCreative;
 };
 const emptyAd = (kind: AdCreative["kind"] = "image"): AdCreative => ({ enabled: false, kind, mediaUrl: "", linkUrl: "", html: "", skipAfterSec: 5 });
 export const DEFAULT_ADS: AdsConfig = {
@@ -152,6 +154,8 @@ export const DEFAULT_ADS: AdsConfig = {
   homeBottom: emptyAd(),
   videoBelow: emptyAd(),
   videoBottom: emptyAd(),
+  videoTop: emptyAd(),
+  pauseBanner: emptyAd(),
 };
 /* Defensive merge for a stored creative: wrong types fall back to the
    default instead of breaking the player or a banner slot. */
@@ -245,6 +249,8 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
         homeBottom: normAd(DEFAULT_ADS.homeBottom, p.ads?.homeBottom),
         videoBelow: normAd(DEFAULT_ADS.videoBelow, p.ads?.videoBelow),
         videoBottom: normAd(DEFAULT_ADS.videoBottom, p.ads?.videoBottom),
+        videoTop: normAd(DEFAULT_ADS.videoTop, p.ads?.videoTop),
+        pauseBanner: normAd(DEFAULT_ADS.pauseBanner, p.ads?.pauseBanner),
       },
       taxonomy: {
         categories: { ...emptyTax(), ...(p.taxonomy?.categories ?? {}) },
@@ -753,7 +759,7 @@ export function buildSitemapXml(base: string, d: SitemapData): string {
      they bloat the sitemap (the old sitemap was 88% tag pages) and
      dilute crawl budget. */
   for (const t of d.tags) if (t.count >= 2) out.push(url(`/tag/${slugify(t.name)}`, today, "weekly", "0.6"));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">\n${out.filter(Boolean).join("\n")}\n</urlset>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${out.filter(Boolean).join("\n")}\n</urlset>\n`;
 }
 
 /* Google Video Sitemap entry for one video: a <video:video> block
@@ -779,8 +785,13 @@ export function videoSitemapBlock(base: string, v: Video): string | null {
   ];
   if (v.durationSec > 0) lines.push(`    <video:duration>${Math.floor(v.durationSec)}</video:duration>`);
   if (v.hasDate) lines.push(`    <video:publication_date>${isoDateFromDays(v.days)}</video:publication_date>`);
+  /* .xxx lists rating (0-5) and view counts in its video sitemap; our
+     stored rating is a 0-100 percentage, so it is scaled to 0-5. */
+  if (v.hasRating && v.rating > 0) lines.push(`    <video:rating>${(v.rating / 20).toFixed(1)}</video:rating>`);
+  if (v.hasViews && v.views > 0) lines.push(`    <video:view_count>${v.views}</video:view_count>`);
   lines.push(`    <video:family_friendly>no</video:family_friendly>`);
-  return `  <video:video>\n${lines.join("\n")}\n  </video:video>`;
+  const img = `  <image:image>\n    <image:loc>${xmlEsc(thumb)}</image:loc>\n    <image:caption>${xmlEsc(title)}</image:caption>\n  </image:image>`;
+  return `  <video:video>\n${lines.join("\n")}\n  </video:video>\n${img}`;
 }
 
 export function buildRobotsTxt(base: string): string {

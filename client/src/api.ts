@@ -5,7 +5,7 @@
 // to the matching handler in lib/actions.ts and returns its JSON.
 // No SDK, no codegen — the method types below are the contract.
 
-export type InteractionKind = "like" | "save" | "follow" | "history";
+export type InteractionKind = "like" | "save" | "follow" | "history" | "dislike";
 
 export interface EmbedStream {
   url: string;
@@ -26,6 +26,7 @@ export interface ViewerState {
   saves: string[];
   follows: string[];
   history: string[];
+  dislikes: string[];
 }
 
 async function call<T>(action: string, args: Record<string, unknown>): Promise<T> {

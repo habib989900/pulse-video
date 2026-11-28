@@ -148,6 +148,8 @@ const AD_SLOTS: { key: keyof AdsConfig; label: string; hint: string; kinds: AdCr
   { key: "homeBottom", label: "Home — bottom", hint: "Banner at the bottom of the home page, above the footer.", kinds: ["image", "html"] },
   { key: "videoBelow", label: "Video page — below the player", hint: "Banner right under the video player.", kinds: ["image", "html"] },
   { key: "videoBottom", label: "Video page — bottom", hint: "Banner at the very bottom of the video page, below the related videos.", kinds: ["image", "html"] },
+  { key: "videoTop", label: "Video page — above the player", hint: "Banner right above the video player, like the top sponsor slot on the reference site.", kinds: ["image", "html"] },
+  { key: "pauseBanner", label: "Pause banner — over the player when paused", hint: "Shows over the video while it is paused, with a close button. Shows again on the next pause.", kinds: ["image", "html"] },
 ];
 
 function AdSlotEditor({ slot, ad, onChange }: { slot: (typeof AD_SLOTS)[number]; ad: AdCreative; onChange: (patch: Partial<AdCreative>) => void }) {

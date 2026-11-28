@@ -23,7 +23,7 @@ import { get, put } from "@vercel/blob";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export type InteractionKind = "like" | "save" | "follow" | "history";
+export type InteractionKind = "like" | "save" | "follow" | "history" | "dislike";
 
 export interface InteractionRow {
   id: number;
@@ -133,7 +133,7 @@ export async function listInteractions(): Promise<InteractionRow[]> {
   const valid = rows.filter(
     (r): r is InteractionRow =>
       !!r && typeof r === "object" &&
-      (r.kind === "like" || r.kind === "save" || r.kind === "follow" || r.kind === "history") &&
+      (r.kind === "like" || r.kind === "save" || r.kind === "follow" || r.kind === "history" || r.kind === "dislike") &&
       typeof r.itemKey === "string" && r.itemKey.length > 0 &&
       Number.isFinite(r.id) && Number.isFinite(r.createdAt),
   );

@@ -22,7 +22,7 @@ import {
   type InteractionKind,
 } from "./store.js";
 
-const kindEnum = z.enum(["like", "save", "follow", "history"]);
+const kindEnum = z.enum(["like", "save", "follow", "history", "dislike"]);
 
 /* Server-side shape validation for the admin payload (A3). Before
    this, saveAdminState stored any string the client sent — a bug,
@@ -89,6 +89,8 @@ const adminStateSchema = z.object({
     homeBottom: adCreativeSchema,
     videoBelow: adCreativeSchema,
     videoBottom: adCreativeSchema,
+    videoTop: adCreativeSchema,
+    pauseBanner: adCreativeSchema,
   }),
   taxonomy: z.object({
     categories: taxOpSchema,
@@ -121,6 +123,7 @@ const stateResponse = z.object({
   saves: z.array(z.string()),
   follows: z.array(z.string()),
   history: z.array(z.string()),
+  dislikes: z.array(z.string()),
 });
 
 export interface ActionDef {
@@ -138,6 +141,7 @@ export const ACTIONS: Record<string, ActionDef> = {
         saves: rows.filter((r) => r.kind === "save").map((r) => r.itemKey),
         follows: rows.filter((r) => r.kind === "follow").map((r) => r.itemKey),
         history: rows.filter((r) => r.kind === "history").map((r) => r.itemKey),
+        dislikes: rows.filter((r) => r.kind === "dislike").map((r) => r.itemKey),
       });
     },
   },
