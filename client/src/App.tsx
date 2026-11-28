@@ -265,7 +265,7 @@ export function Thumb({ v, rank, wide, badge, priority, forcePreview }: { v: Vid
       )}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
       {badge && <span className="absolute left-2 top-2 rounded-md bg-[var(--accent)] px-2 py-0.5 text-[11px] font-black tracking-wide text-white shadow">{badge}</span>}
-      {v.hd && <span className="absolute bottom-2 left-2 rounded-md bg-amber-400 px-2 py-0.5 text-[11px] font-black tracking-wide text-black shadow-md ring-1 ring-black/10">4K</span>}
+      {v.hd && <span className="absolute bottom-2 left-2 rounded-md bg-[#ffd600] px-2.5 py-0.5 text-[12px] font-black tracking-wide text-black shadow-md ring-1 ring-black/10">4K</span>}
       {v.duration && <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-bold text-white shadow ring-1 ring-white/20">{v.duration}</span>}
     </div>
   );
@@ -1470,9 +1470,9 @@ function Avatar({ name, g, size = 112, photo }: { name: string; g: [string, stri
   const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   /* A real model photo replaces the gradient initials — square with
      4 visible corners, like the rest of the site's model photos. */
-  if (photo) return <img src={photo} alt="" loading="lazy" className="shrink-0 rounded-[12px] object-cover ring-1 ring-white/15" style={{ width: `min(${size}px, 20vw)`, height: `min(${size}px, 20vw)` }} aria-hidden="true" />;
+  if (photo) return <img src={photo} alt="" loading="lazy" className="shrink-0 rounded-[12px] object-cover ring-1 ring-white/15" style={{ width: `min(${size}px, 40vw)`, height: `min(${size}px, 40vw)` }} aria-hidden="true" />;
   return (
-    <span className="font-display flex items-center justify-center rounded-[12px] font-black text-white shrink-0 ring-1 ring-white/15" style={{ width: `min(${size}px, 20vw)`, height: `min(${size}px, 20vw)`, background: `linear-gradient(135deg, ${g[0]}, ${g[1]})`, fontSize: `min(${Math.round(size * 0.32)}px, 6.4vw)` }} aria-hidden="true">
+    <span className="font-display flex items-center justify-center rounded-[12px] font-black text-white shrink-0 ring-1 ring-white/15" style={{ width: `min(${size}px, 40vw)`, height: `min(${size}px, 40vw)`, background: `linear-gradient(135deg, ${g[0]}, ${g[1]})`, fontSize: `min(${Math.round(size * 0.32)}px, 12.8vw)` }} aria-hidden="true">
       {initials}
     </span>
   );
@@ -3045,9 +3045,8 @@ export function App() {
             <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
               <button type="button" onClick={() => openListing({ kind: "creator", name: current.creator })} className="flex items-center gap-2.5 transition active:scale-[0.97]" aria-label={`More videos by ${current.creator}`}>
                 {(() => { const c = CREATORS.find((x) => x.name === current.creator); return c ? <Avatar name={c.name} g={c.g} size={40} photo={c.photo} /> : null; })()}
-                <span className="text-left"><span className="block text-sm font-bold text-white">{current.creator}</span><span className="block text-xs text-[var(--dim)]">{follows.includes(current.creator) ? "You follow this model" : "Model"}</span></span>
+                <span className="text-left"><span className="block text-sm font-bold text-white">{current.creator}</span><span className="block text-xs text-[var(--dim)]">Model</span></span>
               </button>
-              <button type="button" onClick={() => toggle.mutate({ kind: "follow", itemKey: current.creator })} className={`ml-auto rounded-full px-5 py-2.5 font-bold ${follows.includes(current.creator) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(current.creator) ? "Following" : btnLabel("follow", "Follow")}</button>
             </div>
             )}
 
@@ -3069,7 +3068,7 @@ export function App() {
                 <div className="mt-3">
                   {(current.description || !current.custom) && (
                     <p className="text-sm leading-relaxed text-zinc-200">
-                      {current.description ?? `Filmed and edited by ${current.creator}, this ${current.category.toLowerCase()} video covers ${current.tags.join(", ")}. It has been watched ${fmtViews(current.views)} times and ${current.rating}% of viewers liked it. Watch in up to 4K, save it to Watch later, or follow ${current.creator} so new uploads land in your Following list.`}
+                      {current.description ?? `Filmed and edited by ${current.creator}, this ${current.category.toLowerCase()} video covers ${current.tags.join(", ")}. It has been watched ${fmtViews(current.views)} times and ${current.rating}% of viewers liked it. Watch in up to 4K, save it to Watch later, or explore more from ${current.creator}.`}
                     </p>
                   )}
                   <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -3277,13 +3276,12 @@ export function App() {
               {listing.kind === "creator" && creatorInfo && (
                 <div className="mt-4">
                   <div className="flex flex-wrap items-center gap-4">
-                    <Avatar name={creatorInfo.name} g={creatorInfo.g} size={100} photo={creatorInfo.photo} />
+                    <Avatar name={creatorInfo.name} g={creatorInfo.g} size={160} photo={creatorInfo.photo} />
                     <div>
                       <p className="text-[13px] text-[var(--dim)]">{creatorInfo.videos} videos · {creatorInfo.followers} followers</p>
-                      <button type="button" aria-pressed={follows.includes(listing.name)} onClick={() => toggle.mutate({ kind: "follow", itemKey: listing.name })} className={`mt-2 rounded-full px-6 py-2.5 font-bold ${follows.includes(listing.name) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(listing.name) ? "Following" : btnLabel("follow", "Follow")}</button>
                     </div>
                   </div>
-                  <p className={`mt-3 max-w-2xl text-sm leading-relaxed text-zinc-300 ${bioOpen ? "" : "line-clamp-2"}`}>{creatorInfo.name} is one of the most-watched models on Pulse Video, with {creatorInfo.videos} videos and {creatorInfo.followers} followers. New uploads land every week — follow {creatorInfo.name} and they will show up in your Following list on your profile.</p>
+                  <p className={`mt-3 max-w-2xl text-sm leading-relaxed text-zinc-300 ${bioOpen ? "" : "line-clamp-2"}`}>{creatorInfo.name} is one of the most-watched models on Pulse Video, with {creatorInfo.videos} videos and {creatorInfo.followers} followers. New uploads land every week.</p>
                   <button type="button" onClick={() => setBioOpen(!bioOpen)} className="mt-1 py-1 font-semibold text-[var(--accent)]">{bioOpen ? "Less" : "More"}</button>
                 </div>
               )}
@@ -3431,8 +3429,8 @@ export function App() {
               </div>
               <div className="no-scrollbar -mx-4 mt-4 flex gap-5 overflow-x-auto px-4 pb-1 [scroll-snap-type:x_mandatory] sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 lg:grid-cols-6">
                 {CREATORS.filter((c) => c.videos > 0).slice(0, 12).map((c) => (
-                  <div key={c.name} className="flex w-[104px] shrink-0 snap-start flex-col items-center text-center sm:w-auto">
-                    <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} photo={c.photo} /></button>
+                  <div key={c.name} className="flex w-[160px] shrink-0 snap-start flex-col items-center text-center sm:w-auto">
+                    <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={160} photo={c.photo} /></button>
                     <span className="mt-2 line-clamp-1 max-w-full text-sm font-bold text-white">{c.name}</span>
                     <span className="text-xs text-[var(--dim)]">{c.videos} videos</span>
                   </div>
@@ -3612,10 +3610,9 @@ export function App() {
             <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4">
               {modelSlice.map((c) => (
                 <div key={c.name} className="flex flex-col items-center text-center">
-                  <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} photo={c.photo} /></button>
+                  <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={200} photo={c.photo} /></button>
                   <span className="mt-2.5 text-sm font-bold text-white">{c.name}</span>
                   <span className="text-xs text-[var(--dim)]">{c.videos} videos</span>
-                  <button type="button" aria-pressed={follows.includes(c.name)} onClick={() => toggle.mutate({ kind: "follow", itemKey: c.name })} className={`mt-2 rounded-full px-4 py-1.5 text-sm font-bold ${follows.includes(c.name) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(c.name) ? "Following" : btnLabel("follow", "Follow")}</button>
                 </div>
               ))}
             </div>
@@ -3646,7 +3643,7 @@ export function App() {
             ))}
             <div className="mt-7">
               <h2 className="font-display text-xl font-extrabold text-white">Following</h2>
-              {follows.length === 0 ? <p className="mt-2 text-[var(--dim)]">Follow models from the Models tab and they'll show up here.</p> : (
+              {follows.length === 0 ? <p className="mt-2 text-[var(--dim)]">No followed models.</p> : (
                 <div className="mt-3 flex flex-wrap gap-4">
                   {follows.map((name) => { const c = CREATORS.find((x) => x.name === name); return c ? (
                     <button key={name} type="button" onClick={() => openListing({ kind: "creator", name })} className="flex flex-col items-center gap-1.5 transition active:scale-95"><Avatar name={c.name} g={c.g} size={64} photo={c.photo} /><span className="max-w-[90px] text-center text-sm font-semibold text-white">{name}</span></button>
