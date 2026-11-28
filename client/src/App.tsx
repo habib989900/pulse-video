@@ -1575,15 +1575,18 @@ export function App() {
       const y = window.scrollY;
       const last = lastScrollYRef.current;
       lastScrollYRef.current = y;
-      /* Never hide while the user is searching or the menu is open. */
-      if (searchOpen || suggOpen || drawer) { setHidden(false); return; }
+      /* Never hide while the user is actively typing in search (the
+         input has focus) or the menu drawer is open. (The old guard
+         also blocked on suggOpen, but suggestions stay open after the
+         auto-navigation to the results page, so the chrome never hid.) */
+      if (drawer || document.activeElement === searchInputRef.current) { setHidden(false); return; }
       if (y <= 0) { setHidden(false); return; }
       if (y > last + 4 && y > 120) setHidden(true);
       else if (y < last - 4) setHidden(false);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, [searchOpen, suggOpen, drawer]);
+  }, [drawer]);
   const [shareOpen, setShareOpen] = useState(false);
   const [dlBusy, setDlBusy] = useState(false);
   /* Feed-listing period filter, like the reference site's period
@@ -2291,7 +2294,7 @@ export function App() {
     searchTimer.current = window.setTimeout(() => {
       /* The search navigates at once; the admin-code check runs in
          parallel and only a confirmed match diverts to the panel. */
-      if (!alreadyThere) openListing({ kind: "search", name: q });
+      if (!alreadyThere) { setSuggOpen(false); openListing({ kind: "search", name: q }); }
       if (plausible) void tryAdminCode(q).then((ok) => { if (ok && queryRef.current.trim() === q) { setQuery(""); setSearchDraft(""); goAdmin(); } });
     }, 650);
     return () => { window.clearTimeout(searchTimer.current); };
@@ -2815,7 +2818,7 @@ export function App() {
             <button type="button" onClick={openHistory} className="py-1 hover:text-white">History</button>
           </nav>
           <div className="ml-auto flex items-center gap-1 md:gap-3">
-            <button type="button" aria-label={searchOpen ? "Close search" : "Search"} aria-expanded={searchOpen} onClick={() => setSearchOpen(!searchOpen)} className="p-1.5 text-white transition active:scale-90 md:hidden"><Icon n="search" size={21} tone="accent" /></button>
+            <button type="button" aria-label={searchOpen ? "Close search" : "Search"} aria-expanded={searchOpen} onClick={() => { if (searchOpen) { setQuery(""); setSuggOpen(false); } setSearchOpen(!searchOpen); }} className="p-1.5 text-white transition active:scale-90 md:hidden"><Icon n="search" size={21} tone="accent" /></button>
             <button type="button" aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-pressed={theme === "light"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="p-1.5 text-white transition active:scale-90"><Icon n={theme === "dark" ? "sun" : "moon"} size={21} tone="accent" /></button>
             <button type="button" aria-label="Watch history" onClick={openHistory} className="p-1.5 text-white transition active:scale-90"><Icon n="history" tone="accent" /></button>
             <div className="relative">
@@ -3259,7 +3262,7 @@ export function App() {
           }
           return (
             <section className="pt-5" aria-label={heading}>
-              <div className="no-scrollbar -mx-4 flex gap-6 overflow-x-auto px-4" role="tablist" aria-label="Feed filters">
+              <div className={`no-scrollbar -mx-4 flex gap-6 overflow-x-auto px-4 transition-all duration-300 ${chromeHidden ? "max-h-0 opacity-0" : "max-h-12 opacity-100"}`} role="tablist" aria-label="Feed filters">
                 {FEED_TABS.map((t) => {
                   const active = listing.kind === "feed" && listing.name === t;
                   return (
@@ -3277,7 +3280,7 @@ export function App() {
                 <span aria-hidden="true">/</span>
                 <span className="line-clamp-1 max-w-[55%] font-semibold capitalize text-zinc-200">{listing.kind === "feed" ? heading : listing.name}</span>
               </nav>
-              <button type="button" onClick={() => listingBack(listing)} className="mt-3 rounded-full border border-[var(--border)] px-4 py-2 text-sm font-bold text-white transition active:scale-95">← Back to {listingSegment(listing)}</button>
+              <button type="button" onClick={() => listingBack(listing)} className="mt-3 rounded-full border border-[var(--border)] px-3 py-1.5 text-xs font-bold text-white transition active:scale-95">← Back to {listingSegment(listing)}</button>
               <h1 className="font-display mt-4 text-xl font-black capitalize leading-tight text-white sm:text-2xl">{heading}</h1>
               <p className="mt-1 text-[13px] text-[var(--dim)]">{listingCount(listing, list)}{listing.kind === "creator" && creatorInfo ? ` · ${creatorInfo.followers} followers` : ""}</p>
               {listing.kind === "feed" && (
@@ -3389,7 +3392,7 @@ export function App() {
         {!notFound && !historyView && !current && !listing && !fileView && !legalView && tab === "home" && (
           <>
             <h1 className="font-display pt-5 text-xl font-black leading-tight text-white sm:text-2xl">{texts.homeH1}</h1>
-            <div className="no-scrollbar -mx-4 flex gap-6 overflow-x-auto px-4 pt-3" role="tablist" aria-label="Feed filters">
+            <div className={`no-scrollbar -mx-4 flex gap-6 overflow-x-auto px-4 pt-3 transition-all duration-300 ${chromeHidden ? "max-h-0 opacity-0" : "max-h-12 opacity-100"}`} role="tablist" aria-label="Feed filters">
               {FEED_TABS.map((t) => {
                 const active = t === "For you";
                 return (
