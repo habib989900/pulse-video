@@ -14,7 +14,7 @@ import { Icon, Thumb } from "./App";
 
 /* ---------------- CSV (import / export) ---------------- */
 
-const CSV_COLUMNS = ["title", "embed_url", "description", "duration", "views", "date", "creator", "channel", "category", "tags", "thumbnail", "seo_title", "seo_description"] as const;
+const CSV_COLUMNS = ["title", "embed_url", "description", "duration", "views", "date", "creator", "channel", "category", "tags", "thumbnail", "seo_title", "seo_description", "models"] as const;
 type CsvColumn = (typeof CSV_COLUMNS)[number];
 type CsvRow = Record<CsvColumn, string | null>;
 
@@ -80,6 +80,7 @@ function csvRowToAdmin(r: CsvRow, id: string): AdminVideo {
     days: date?.days ?? null,
     dateStr: date?.dateStr ?? null,
     creator: r.creator,
+    models: r.models ? r.models.split(",").map((t) => t.trim()).filter(Boolean) : [],
     channel: r.channel,
     category: r.category,
     tags: r.tags ? r.tags.split(",").map((t) => t.trim().toLowerCase()).filter((t) => t !== "" && !JUNK_TAGS.includes(t)) : [],
@@ -99,8 +100,8 @@ function csvEscape(s: string): string {
 
 const CSV_TEMPLATE = [
   CSV_COLUMNS.join(","),
-  'Sample video title,https://example.com/embed/sample-video,A short sample description,12:34,1500,2026-11-20,Sample Creator,Sample Channel,Travel,"travel, guide",https://example.com/thumb.jpg,Sample SEO title,Sample SEO description',
-  "Title only plus embed,https://example.com/embed/second,,,,,,,,,,,",
+  'Sample video title,https://example.com/embed/sample-video,A short sample description,12:34,1500,2026-11-20,Sample Creator,Sample Channel,Travel,"travel, guide",https://example.com/thumb.jpg,Sample SEO title,Sample SEO description,Sample Model',
+  "Title only plus embed,https://example.com/embed/second,,,,,,,,,,,,",
 ].join("\n");
 
 /* ---------------- Admin panel helpers ---------------- */
@@ -253,6 +254,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
   const [form, setForm] = useState<AdminVideo | null>(null);
   const [durText, setDurText] = useState("");
   const [tagsText, setTagsText] = useState("");
+  const [modelsText, setModelsText] = useState("");
   const [formError, setFormError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -287,8 +289,8 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
   const filteredVideos = eff.videos.filter((v) => (vCat === "All" || v.category === vCat) && (!vSearch.trim() || v.title.toLowerCase().includes(vSearch.trim().toLowerCase()) || v.creator.toLowerCase().includes(vSearch.trim().toLowerCase())));
   const recent = [...eff.videos].sort((a, b) => a.days - b.days).slice(0, 6);
 
-  const openAdd = () => { setForm(emptyAdminVideo(crypto.randomUUID())); setDurText(""); setTagsText(""); setFormError(""); };
-  const openEdit = (v: Video) => { const av = videoToAdmin(v); setForm(av); setDurText(av.durationSec != null ? fmtDur(av.durationSec) : ""); setTagsText(av.tags.join(", ")); setFormError(""); };
+  const openAdd = () => { setForm(emptyAdminVideo(crypto.randomUUID())); setDurText(""); setTagsText(""); setModelsText(""); setFormError(""); };
+  const openEdit = (v: Video) => { const av = videoToAdmin(v); setForm(av); setDurText(av.durationSec != null ? fmtDur(av.durationSec) : ""); setTagsText(av.tags.join(", ")); setModelsText(av.models.join(", ")); setFormError(""); };
   const saveForm = () => {
     if (!form) return;
     const clean = (s: string | null) => (s?.trim() ? s.trim() : null);
@@ -305,6 +307,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
       seoDescription: clean(form.seoDescription),
       durationSec: parseDuration(durText),
       tags: tagsText.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean),
+      models: modelsText.split(",").map((t) => t.trim()).filter(Boolean),
     };
     if (!rec.title && !rec.embedUrl) { setFormError("Give the video at least a title or an embed link — a video with neither cannot be added."); return; }
     if (st.addedVideos.some((v) => v.id === rec.id)) commit({ ...st, addedVideos: st.addedVideos.map((v) => (v.id === rec.id ? rec : v)) });
@@ -369,20 +372,35 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
   const taxRename = (tab: TaxTab, oldName: string, newName: string) => {
     const n = newName.trim();
     if (!n || n === oldName) return;
+    /* A renamed model keeps its photo: move the modelPhotos key. */
+    const movePhoto = (s: AdminState) => {
+      if (tab !== "models" || !s.modelPhotos?.[oldName]) return s;
+      const next = { ...s.modelPhotos };
+      const prev = next[oldName];
+      if (prev) next[n] = prev;
+      delete next[oldName];
+      return { ...s, modelPhotos: next };
+    };
     if (tab === "channels" && st.taxonomy.channelsAdded.some((c) => c.name === oldName)) {
       commit({ ...st, taxonomy: { ...st.taxonomy, channelsAdded: st.taxonomy.channelsAdded.map((c) => (c.name === oldName ? { ...c, name: n } : c)) } });
       return;
     }
     const op = st.taxonomy[tab];
-    if (op.added.includes(oldName)) { commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, added: op.added.map((a) => (a === oldName ? n : a)) } } }); return; }
+    if (op.added.includes(oldName)) { commit(movePhoto({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, added: op.added.map((a) => (a === oldName ? n : a)) } } })); return; }
     const renamed = { ...op.renamed };
     const key = Object.keys(renamed).find((k) => renamed[k] === oldName) ?? oldName;
     renamed[key] = n;
-    commit({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, renamed } } });
+    commit(movePhoto({ ...st, taxonomy: { ...st.taxonomy, [tab]: { ...op, renamed } } }));
   };
   /* Pure form of a single taxonomy delete, so the bulk delete can fold
      many names through it and commit once. */
   const taxDeleteFrom = (s: AdminState, tab: TaxTab, name: string): AdminState => {
+    /* Deleting a model also drops its photo so no orphaned URL lingers. */
+    if (tab === "models" && s.modelPhotos?.[name]) {
+      const next = { ...s.modelPhotos };
+      delete next[name];
+      s = { ...s, modelPhotos: next };
+    }
     if (tab === "channels" && s.taxonomy.channelsAdded.some((c) => c.name === name)) {
       return { ...s, taxonomy: { ...s.taxonomy, channelsAdded: s.taxonomy.channelsAdded.filter((c) => c.name !== name) } };
     }
@@ -481,6 +499,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
         views: v.hasViews ? String(v.views) : "",
         date: v.hasDate ? dateFromDays(v.days) : "",
         creator: v.creator,
+        models: v.models.join(", "),
         channel: v.channel ?? "",
         category: v.category,
         tags: v.tags.join(", "),
@@ -755,6 +774,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
                     <AInput label="Channel" value={form.channel ?? ""} onChange={(v) => setForm({ ...form, channel: v })} list="admin-channels" />
                     <AInput label="Category" value={form.category ?? ""} onChange={(v) => setForm({ ...form, category: v })} list="admin-categories" />
                     <div className="sm:col-span-2"><AInput label="Tags (comma-separated)" value={tagsText} onChange={setTagsText} placeholder="travel, 4k, guide" /></div>
+                    <div className="sm:col-span-2"><AInput label="Models (comma-separated)" value={modelsText} onChange={setModelsText} placeholder="Isiah Maxwell, Koda Monroe" /></div>
                     <div className="sm:col-span-2"><AInput label="Thumbnail image URL (empty = automatic art)" value={form.thumbnailUrl ?? ""} onChange={(v) => setForm({ ...form, thumbnailUrl: v })} placeholder="https://…" /></div>
                     <AInput label="SEO title (empty = falls back to title)" value={form.seoTitle ?? ""} onChange={(v) => setForm({ ...form, seoTitle: v })} />
                     <AInput label="SEO description" value={form.seoDescription ?? ""} onChange={(v) => setForm({ ...form, seoDescription: v })} />
@@ -855,8 +875,12 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
                     ) : (
                       <>
                         <input type="checkbox" aria-label={`Select ${taxSingular}: ${item.name}`} checked={taxSelected.includes(item.name)} onChange={() => toggleTaxSelect(item.name)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
+                        {taxTab === "models" && st.modelPhotos?.[item.name] ? <img src={st.modelPhotos[item.name]} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-white/15" /> : null}
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{item.name}</span>
                         <span className="text-xs text-[var(--dim)]">{item.count} videos</span>
+                        {taxTab === "models" && (
+                          <input aria-label={`Photo URL for ${item.name}`} defaultValue={st.modelPhotos?.[item.name] ?? ""} placeholder="Photo URL" onBlur={(e) => { if (saveDisabled) return; const url = e.target.value.trim(); const next = { ...(st.modelPhotos ?? {}) }; if (url) next[item.name] = url; else delete next[item.name]; commit({ ...st, modelPhotos: next }); }} className={`${inputCls} w-full`} />
+                        )}
                         <button type="button" onClick={() => { setRenameOf(item.name); setRenameText(item.name); }} className="rounded-full bg-[var(--surface2)] px-3.5 py-2 text-[13px] font-bold text-white transition active:scale-95">Rename</button>
                         {confirmTaxDelete === item.name ? (
                           <>

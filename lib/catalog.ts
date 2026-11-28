@@ -26,6 +26,7 @@ export type Video = {
   category: string;
   tags: string[];
   creator: string;
+  models: string[];
   g: [string, string];
   /* Admin-managed fields. Videos added or edited in the admin panel
      carry real values, where null means "not provided" and the UI
@@ -87,6 +88,7 @@ export type AdminVideo = {
   days: number | null;
   dateStr: string | null;
   creator: string | null;
+  models: string[];
   channel: string | null;
   category: string | null;
   tags: string[];
@@ -109,6 +111,7 @@ export type AdminState = {
   addedVideos: AdminVideo[];
   overrides: Record<string, AdminVideo>;
   deletedIds: string[];
+  modelPhotos: Record<string, string>;
   ads: AdsConfig;
   taxonomy: {
     categories: TaxOp;
@@ -203,6 +206,7 @@ export const DEFAULT_ADMIN_STATE: AdminState = {
   addedVideos: [],
   overrides: {},
   deletedIds: [],
+  modelPhotos: {},
   ads: JSON.parse(JSON.stringify(DEFAULT_ADS)) as AdsConfig,
   taxonomy: { categories: emptyTax(), models: emptyTax(), tags: emptyTax(), channels: emptyTax(), channelsAdded: [] },
 };
@@ -232,6 +236,9 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
           ? Object.fromEntries(Object.entries(p.overrides).map(([k, v]) => [k, normalizeAdminVideo(v as Partial<AdminVideo> & { id: string })]))
           : {},
       deletedIds: Array.isArray(p.deletedIds) ? p.deletedIds : [],
+      modelPhotos: p.modelPhotos && typeof p.modelPhotos === "object"
+        ? Object.fromEntries(Object.entries(p.modelPhotos).filter(([, v]) => typeof v === "string"))
+        : {},
       ads: {
         preroll: normAd(DEFAULT_ADS.preroll, p.ads?.preroll),
         homeTop: normAd(DEFAULT_ADS.homeTop, p.ads?.homeTop),
@@ -269,6 +276,7 @@ export function normalizeAdminVideo(v: Partial<AdminVideo> & { id: string }): Ad
     days: v.days ?? null,
     dateStr: v.dateStr ?? null,
     creator: v.creator ?? null,
+    models: Array.isArray(v.models) ? [...v.models] : [],
     channel: v.channel ?? null,
     category: v.category ?? null,
     tags: Array.isArray(v.tags) ? [...v.tags] : [],
@@ -286,7 +294,7 @@ export function normalizeAdminVideo(v: Partial<AdminVideo> & { id: string }): Ad
    parseAdminState + buildEffective consume it unchanged), but each
    video keeps only what home/list/search pages and the player need —
    id, title, thumbnail, duration, views, age, category, tags,
-   creator (model), channel, badges and the embed URL. Dropped per
+   creator (model), models, channel, badges and the embed URL. Dropped per
    video: description, seoTitle, seoDescription, dateStr. Measured
    on the live 2026-11-27 backup (198 videos): the dropped fields
    are 26,916 B of the 209,323 B inner payload (~13% of the served
@@ -311,6 +319,7 @@ export function toSlimAdminState(admin: AdminState): AdminState {
     channel: v.channel,
     category: v.category,
     tags: [...v.tags],
+    models: [...v.models],
     thumbnailUrl: v.thumbnailUrl,
     seoTitle: null,
     seoDescription: null,
@@ -326,6 +335,7 @@ export function toSlimAdminState(admin: AdminState): AdminState {
     addedVideos: admin.addedVideos.map(slimVideo),
     overrides: Object.fromEntries(Object.entries(admin.overrides).map(([k, v]) => [k, slimVideo(v)])),
     deletedIds: [...admin.deletedIds],
+    modelPhotos: { ...admin.modelPhotos },
     ads: admin.ads ? JSON.parse(JSON.stringify(admin.ads)) as AdsConfig : JSON.parse(JSON.stringify(DEFAULT_ADS)) as AdsConfig,
     taxonomy: JSON.parse(JSON.stringify(admin.taxonomy)) as AdminState["taxonomy"],
   };
@@ -496,6 +506,7 @@ function adminToVideo(av: AdminVideo): Video {
     category: decText(av.category) ?? "Uncategorized",
     tags: (av.tags ?? []).map((t) => decodeEntities(t)),
     creator: decText(av.creator) ?? "",
+    models: (av.models ?? []).map((t) => decodeEntities(t)),
     g: gradientFor(av.id + (av.title ?? "")),
     embedUrl: av.embedUrl,
     description: decText(av.description),
@@ -526,6 +537,7 @@ export function videoToAdmin(v: Video): AdminVideo {
     channel: v.channel,
     category: v.category,
     tags: [...v.tags],
+    models: [...v.models],
     thumbnailUrl: v.thumbnailUrl,
     seoTitle: v.seoTitle,
     seoDescription: v.seoDescription,
@@ -540,7 +552,7 @@ export function emptyAdminVideo(id: string): AdminVideo {
   return {
     id, title: null, description: null, embedUrl: null, durationSec: null, views: null,
     days: 0, dateStr: dateFromDays(0), creator: null, channel: null, category: null,
-    tags: [], thumbnailUrl: null, seoTitle: null, seoDescription: null,
+    tags: [], models: [], thumbnailUrl: null, seoTitle: null, seoDescription: null,
     featured: false, badgeNew: true, rating: null, hd: true,
   };
 }
@@ -616,15 +628,21 @@ export function buildEffective(admin: AdminState | null) {
   for (const v of videos) if (!catNames.includes(v.category)) catNames.push(v.category);
   const categories = catNames.map((name) => ({ name, count: String(videos.filter((v) => v.category === name || v.tags.includes(name.toLowerCase())).length) }));
 
-  type EffCreator = { name: string; videos: number; followers: string; g: [string, string] };
+  type EffCreator = { name: string; videos: number; followers: string; g: [string, string]; photo: string | null };
   const creators: EffCreator[] = [];
+  /* Model photos are admin-managed (name -> photo URL); a model with
+     no photo falls back to the gradient-initial Avatar. */
+  const photoOf = (name: string) => admin?.modelPhotos?.[name] ?? null;
   for (const c of CREATORS) {
     if ((tax?.models.deleted ?? []).includes(c.name)) continue;
-    creators.push({ name: ren(modRen, c.name), videos: 0, followers: c.followers, g: c.g });
+    creators.push({ name: ren(modRen, c.name), videos: 0, followers: c.followers, g: c.g, photo: photoOf(ren(modRen, c.name)) });
   }
-  for (const n of tax?.models.added ?? []) if (!creators.some((c) => c.name === n)) creators.push({ name: n, videos: 0, followers: "0", g: gradientFor(n) });
-  for (const v of videos) if (v.creator && !creators.some((c) => c.name === v.creator)) creators.push({ name: v.creator, videos: 0, followers: "0", g: gradientFor(v.creator) });
-  for (const c of creators) c.videos = videos.filter((v) => v.creator === c.name).length;
+  for (const n of tax?.models.added ?? []) if (!creators.some((c) => c.name === n)) creators.push({ name: n, videos: 0, followers: "0", g: gradientFor(n), photo: photoOf(n) });
+  /* A video credits every model in its models list (plus its legacy
+     single creator, for videos imported before models existed), so
+     each of them shows up on the Models tab with a video count. */
+  for (const v of videos) for (const name of [v.creator, ...v.models]) if (name && !creators.some((c) => c.name === name)) creators.push({ name, videos: 0, followers: "0", g: gradientFor(name), photo: photoOf(name) });
+  for (const c of creators) c.videos = videos.filter((v) => v.creator === c.name || v.models.includes(c.name)).length;
   /* Most videos first, so the Models page ("Models Having Most
      Videos"), the home strip and the admin list all lead with the
      models that actually have videos instead of burying them behind

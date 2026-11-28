@@ -44,6 +44,7 @@ const adminVideoSchema = z.object({
   days: z.number().nullable(),
   dateStr: z.string().nullable(),
   creator: z.string().nullable(),
+  models: z.array(z.string()),
   channel: z.string().nullable(),
   category: z.string().nullable(),
   tags: z.array(z.string()),
@@ -81,6 +82,7 @@ const adminStateSchema = z.object({
   addedVideos: z.array(adminVideoSchema),
   overrides: z.record(z.string(), adminVideoSchema),
   deletedIds: z.array(z.string()),
+  modelPhotos: z.record(z.string(), z.string()),
   ads: z.object({
     preroll: adCreativeSchema,
     homeTop: adCreativeSchema,

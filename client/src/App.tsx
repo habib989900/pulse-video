@@ -1296,8 +1296,11 @@ function LogoText({ text, size = 19 }: { text: string; size?: number }) {
   );
 }
 
-function Avatar({ name, g, size = 112 }: { name: string; g: [string, string]; size?: number }) {
+function Avatar({ name, g, size = 112, photo }: { name: string; g: [string, string]; size?: number; photo?: string | null }) {
   const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  /* A real model photo replaces the gradient initials — square with
+     4 visible corners, like the rest of the site's model photos. */
+  if (photo) return <img src={photo} alt="" loading="lazy" className="shrink-0 rounded-[12px] object-cover ring-1 ring-white/15" style={{ width: `min(${size}px, 20vw)`, height: `min(${size}px, 20vw)` }} aria-hidden="true" />;
   return (
     <span className="font-display flex items-center justify-center rounded-[12px] font-black text-white shrink-0 ring-1 ring-white/15" style={{ width: `min(${size}px, 20vw)`, height: `min(${size}px, 20vw)`, background: `linear-gradient(135deg, ${g[0]}, ${g[1]})`, fontSize: `min(${Math.round(size * 0.32)}px, 6.4vw)` }} aria-hidden="true">
       {initials}
@@ -2729,7 +2732,7 @@ export function App() {
             {current.creator && (
             <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
               <button type="button" onClick={() => openListing({ kind: "creator", name: current.creator })} className="flex items-center gap-2.5 transition active:scale-[0.97]" aria-label={`More videos by ${current.creator}`}>
-                {(() => { const c = CREATORS.find((x) => x.name === current.creator); return c ? <Avatar name={c.name} g={c.g} size={40} /> : null; })()}
+                {(() => { const c = CREATORS.find((x) => x.name === current.creator); return c ? <Avatar name={c.name} g={c.g} size={40} photo={c.photo} /> : null; })()}
                 <span className="text-left"><span className="block text-sm font-bold text-white">{current.creator}</span><span className="block text-xs text-[var(--dim)]">{follows.includes(current.creator) ? "You follow this model" : "Model"}</span></span>
               </button>
               <button type="button" onClick={() => toggle.mutate({ kind: "follow", itemKey: current.creator })} className={`ml-auto rounded-full px-5 py-2.5 font-bold ${follows.includes(current.creator) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(current.creator) ? "Following" : btnLabel("follow", "Follow")}</button>
@@ -2761,12 +2764,14 @@ export function App() {
                     <span className="text-sm font-semibold text-white">Categories:</span>
                     <button type="button" onClick={() => openListing({ kind: "category", name: current.category })} className="rounded-md bg-[var(--surface2)] px-3 py-1.5 text-sm font-medium text-zinc-100 transition hover:text-[var(--accent)] active:scale-95">{current.category}</button>
                   </div>
-                  {current.creator && (
+                  {(() => { const ms = [...new Set([current.creator, ...current.models].filter(Boolean))]; return ms.length > 0 ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-white">Models:</span>
-                      <button type="button" onClick={() => openListing({ kind: "creator", name: current.creator })} className="rounded-md bg-[var(--surface2)] px-3 py-1.5 text-sm font-medium text-zinc-100 transition hover:text-[var(--accent)] active:scale-95">{current.creator}</button>
+                      {ms.map((m) => (
+                        <button key={m} type="button" onClick={() => openListing({ kind: "creator", name: m })} className="rounded-md bg-[var(--surface2)] px-3 py-1.5 text-sm font-medium text-zinc-100 transition hover:text-[var(--accent)] active:scale-95">{m}</button>
+                      ))}
                     </div>
-                  )}
+                  ) : null; })()}
                 </div>
               )}
             </div>
@@ -2952,7 +2957,7 @@ export function App() {
               {listing.kind === "creator" && creatorInfo && (
                 <div className="mt-4">
                   <div className="flex flex-wrap items-center gap-4">
-                    <Avatar name={creatorInfo.name} g={creatorInfo.g} size={100} />
+                    <Avatar name={creatorInfo.name} g={creatorInfo.g} size={100} photo={creatorInfo.photo} />
                     <div>
                       <p className="text-[13px] text-[var(--dim)]">{creatorInfo.videos} videos · {creatorInfo.followers} followers</p>
                       <button type="button" aria-pressed={follows.includes(listing.name)} onClick={() => toggle.mutate({ kind: "follow", itemKey: listing.name })} className={`mt-2 rounded-full px-6 py-2.5 font-bold ${follows.includes(listing.name) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(listing.name) ? "Following" : btnLabel("follow", "Follow")}</button>
@@ -3094,7 +3099,7 @@ export function App() {
               <div className="no-scrollbar -mx-4 mt-4 flex gap-5 overflow-x-auto px-4 pb-1 [scroll-snap-type:x_mandatory] sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 lg:grid-cols-6">
                 {CREATORS.filter((c) => c.videos > 0).slice(0, 12).map((c) => (
                   <div key={c.name} className="flex w-[104px] shrink-0 snap-start flex-col items-center text-center sm:w-auto">
-                    <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} /></button>
+                    <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} photo={c.photo} /></button>
                     <span className="mt-2 line-clamp-1 max-w-full text-sm font-bold text-white">{c.name}</span>
                     <span className="text-xs text-[var(--dim)]">{c.videos} videos</span>
                   </div>
@@ -3274,7 +3279,7 @@ export function App() {
             <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4">
               {modelSlice.map((c) => (
                 <div key={c.name} className="flex flex-col items-center text-center">
-                  <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} /></button>
+                  <button type="button" aria-label={`Videos by ${c.name}`} onClick={() => openListing({ kind: "creator", name: c.name })} className="transition active:scale-95"><Avatar name={c.name} g={c.g} size={100} photo={c.photo} /></button>
                   <span className="mt-2.5 text-sm font-bold text-white">{c.name}</span>
                   <span className="text-xs text-[var(--dim)]">{c.videos} videos</span>
                   <button type="button" aria-pressed={follows.includes(c.name)} onClick={() => toggle.mutate({ kind: "follow", itemKey: c.name })} className={`mt-2 rounded-full px-4 py-1.5 text-sm font-bold ${follows.includes(c.name) ? "bg-[var(--surface2)] text-white" : "bg-[var(--accent)] text-white"}`}>{follows.includes(c.name) ? "Following" : btnLabel("follow", "Follow")}</button>
@@ -3311,7 +3316,7 @@ export function App() {
               {follows.length === 0 ? <p className="mt-2 text-[var(--dim)]">Follow models from the Models tab and they'll show up here.</p> : (
                 <div className="mt-3 flex flex-wrap gap-4">
                   {follows.map((name) => { const c = CREATORS.find((x) => x.name === name); return c ? (
-                    <button key={name} type="button" onClick={() => openListing({ kind: "creator", name })} className="flex flex-col items-center gap-1.5 transition active:scale-95"><Avatar name={c.name} g={c.g} size={64} /><span className="max-w-[90px] text-center text-sm font-semibold text-white">{name}</span></button>
+                    <button key={name} type="button" onClick={() => openListing({ kind: "creator", name })} className="flex flex-col items-center gap-1.5 transition active:scale-95"><Avatar name={c.name} g={c.g} size={64} photo={c.photo} /><span className="max-w-[90px] text-center text-sm font-semibold text-white">{name}</span></button>
                   ) : null; })}
                 </div>
               )}
