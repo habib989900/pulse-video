@@ -670,7 +670,11 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
   const emb = v.embedUrl ? resolveEmbed(v.embedUrl) : null;
   /* Embeds the resolveEmbedFile action can turn into direct files:
      freepornvideo (/embed/<id>), freepornvideos.xxx (/embed/<id>),
-     XNXX (/embedframe/<id>) and YouPorn (/embed/<id>). XNXX's own
+     XNXX (/embedframe/<id>), YouPorn (/embed/<id>) and
+     perfectgirls.xxx (/embed/<id> — resolved from its video page:
+     the page names the direct get_file links, which 302 to an HLS
+     master with 360p/480p/720p; its storage sends ACAO: * and plays
+     with no Referer, so it plays direct with no proxy). XNXX's own
      player refuses playback inside third-party frames ("Blocked
      content. Contact the site owner to fix"), so its videos must go
      through the same server-side resolution as the gated KVS embeds —
@@ -678,7 +682,7 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
      freepornvideos.xxx offers 480p/720p/4k direct files; YouPorn
      resolves to HLS 480p/240p only — its direct MP4s demand a
      youporn.com Referer, which this site never sends. */
-  const isGatedIframe = !!emb && emb.kind === "iframe" && (() => { try { const u = new URL(emb.src); return /(^|\.)freepornvideo\.sex$/i.test(u.hostname) || (/(^|\.)xnxx\.com$/i.test(u.hostname) && u.pathname.startsWith("/embedframe/")) || (/(^|\.)freepornvideos\.xxx$/i.test(u.hostname) && u.pathname.startsWith("/embed/")) || (/(^|\.)youporn\.com$/i.test(u.hostname) && u.pathname.startsWith("/embed/")); } catch { return false; } })();
+  const isGatedIframe = !!emb && emb.kind === "iframe" && (() => { try { const u = new URL(emb.src); return /(^|\.)freepornvideo\.sex$/i.test(u.hostname) || (/(^|\.)xnxx\.com$/i.test(u.hostname) && u.pathname.startsWith("/embedframe/")) || (/(^|\.)freepornvideos\.xxx$/i.test(u.hostname) && u.pathname.startsWith("/embed/")) || (/(^|\.)youporn\.com$/i.test(u.hostname) && u.pathname.startsWith("/embed/")) || (/(^|\.)perfectgirls\.xxx$/i.test(u.hostname) && u.pathname.startsWith("/embed/")); } catch { return false; } })();
   const queryClient = useQueryClient();
   const [loaded, setLoaded] = useState(false);
   const [fileFailed, setFileFailed] = useState(false);

@@ -433,6 +433,12 @@ export function resolveEmbed(raw: string): { kind: "iframe" | "file"; src: strin
      player — convert it to the /embedframe/ player URL. */
   const xx = s.match(/xnxx\.com\/video-([\w-]+)/i);
   if (xx && xx[1]) return { kind: "iframe", src: `https://www.xnxx.com/embedframe/${xx[1]}` };
+  /* Same for perfectgirls.xxx: a video-page link (/video/<id>/…) is
+     not the embed player — convert it to the /embed/ player URL. The
+     resolver then fetches the video page itself and pulls the direct
+     playing link from it, so a pasted video-page link plays natively. */
+  const pg = s.match(/perfectgirls\.xxx\/video\/(\d+)/i);
+  if (pg && pg[1]) return { kind: "iframe", src: `https://www.perfectgirls.xxx/embed/${pg[1]}` };
   const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{6,})/);
   if (yt && yt[1]) return { kind: "iframe", src: `https://www.youtube.com/embed/${yt[1]}` };
   const vm = s.match(/vimeo\.com\/(?:video\/)?(\d+)/);

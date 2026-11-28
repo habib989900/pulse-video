@@ -1,11 +1,11 @@
 // resolveEmbedFile — ported verbatim from the Muse version's
 // server/src/actions.ts, minus the defineAction wrapper. Resolves a
-// freepornvideo.sex, freepornvideos.xxx, xnxx.com or youporn.com
-// embed page to its direct playable streams — every resolution the
-// source offers — fetched server-side, so the video page can play
-// them in a native in-page player with a full quality menu instead
-// of the source's iframe (whose player can refuse embedded playback
-// with a "Blocked content" notice).
+// freepornvideo.sex, freepornvideos.xxx, xnxx.com, youporn.com or
+// perfectgirls.xxx embed/video page to its direct playable streams —
+// every resolution the source offers — fetched server-side, so the
+// video page can play them in a native in-page player with a full
+// quality menu instead of the source's iframe (whose player can refuse
+// embedded playback with a "Blocked content" notice).
 //
 // One change vs the original: the whole resolve runs under a shared
 // ~9 s deadline with 5 s per fetch, so it stays inside Vercel's 10 s
@@ -376,6 +376,173 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         fileUrl: fastEntry.url,
         hdFileUrl: null,
         fastLabel: `${fastEntry.q}p`,
+        streams,
+        expiresAt: parseExpiryFromUrl(fastEntry.url),
+      });
+    }
+    /* perfectgirls.xxx — the same KVS template as freepornvideos.xxx,
+       verified live 2026-11-28 against video 811113. The system the
+       owner asked to test: he pastes a VIDEO PAGE link and the site
+       serves the direct playing link from it.
+       - the video page lists one get_file URL per encode
+         (811113.mp4 = 480p, 811113_720p.mp4, 811113_360p.mp4, plus a
+         _preview360p file that is not a stream);
+       - every get_file URL 302s (with the page's cookies + Referer)
+         to a multi-variant HLS URL on cdn.privatehost.com, which
+         302s once more to nvms5-b.cdn.privatehost.com and returns an
+         HLS master playlist (360p/480p/720p, ACAO: *);
+       - the variant playlists list .ts segments that answer 206
+         video/MP2T with no Referer, so they play direct here via
+         hls.js (or native HLS in Safari) with no proxy needed.
+       So: video page -> one of its get_file URLs -> HLS master ->
+       its variants as the streams, playback starting at 480p (the
+       embed's own fast label). An embed link works the same way —
+       it is normalised to the video page first; the embed page's
+       video_url is only the fallback if the video page yields
+       nothing. */
+    if (/(^|\.)perfectgirls\.xxx$/i.test(u.hostname)) {
+      const idMatch = u.pathname.match(/^\/(?:embed|video)\/(\d+)/);
+      if (!idMatch || !idMatch[1]) return empty;
+      const id = idMatch[1] as string;
+      const videoPageUrl = `https://www.perfectgirls.xxx/video/${id}/`;
+      const embedPageUrl = `https://www.perfectgirls.xxx/embed/${id}`;
+      const jar = new Map<string, string>();
+      const collectCookies = (res: Response) => {
+        if (typeof res.headers.getSetCookie !== "function") return;
+        for (const c of res.headers.getSetCookie()) {
+          const pair = c.split(";")[0] ?? "";
+          const eq = pair.indexOf("=");
+          if (eq > 0) jar.set(pair.slice(0, eq), pair);
+        }
+      };
+      const cookieHeader = () => [...jar.values()].join("; ");
+      const grab = (html: string, name: string): string | null => {
+        const m =
+          html.match(new RegExp(`${name}:\\s*'([^']+)'`)) ?? html.match(new RegExp(`${name}:\\s*"([^"]+)"`));
+        return m && m[1] ? m[1] : null;
+      };
+      /* One gated hop: a get_file URL 302s to the multi-variant HLS
+         URL with the page's cookies + Referer — the .sex/.xxx
+         pattern. */
+      const followGated = async (filePageUrl: string, referer: string): Promise<string | null> => {
+        try {
+          const fileRes = await fetch(filePageUrl, {
+            headers: { ...ua, ...(jar.size ? { Cookie: cookieHeader() } : {}), Referer: referer },
+            redirect: "manual",
+            signal: fetchTimeout(),
+          });
+          const loc = fileRes.headers.get("location");
+          return loc ? new URL(loc, filePageUrl).toString() : null;
+        } catch {
+          return null;
+        }
+      };
+      let masterUrl: string | null = null;
+      let fastLabel: string | null = null;
+      /* 1. Video page first: pull this video's get_file URLs (the
+         path carries /<id>/; related videos carry other ids, and the
+         _preview file is not a stream) and follow one to the HLS
+         master. */
+      try {
+        const vpRes = await fetch(videoPageUrl, {
+          headers: { ...browserHeaders, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
+          redirect: "follow",
+          signal: fetchTimeout(),
+        });
+        if (vpRes.ok) {
+          collectCookies(vpRes);
+          const vpHtml = await vpRes.text();
+          const filePageUrl = [
+            ...vpHtml.matchAll(
+              new RegExp(`https://www\\.perfectgirls\\.xxx/get_file/[^\\s"'<>]+?/${id}/[^\\s"'<>]*?\\.mp4/`, "g"),
+            ),
+          ]
+            .map((m) => m[0])
+            .find((x) => !x.includes("_preview"));
+          if (filePageUrl) masterUrl = await followGated(filePageUrl, videoPageUrl);
+        }
+      } catch {
+        /* fall through to the embed page */
+      }
+      /* 2. Embed fallback: the embed page's video_url is a get_file
+         URL (480p) — follow it the same way. */
+      if (!masterUrl) {
+        try {
+          const pageRes = await fetch(embedPageUrl, {
+            headers: { ...browserHeaders, ...(jar.size ? { Cookie: cookieHeader() } : {}) },
+            redirect: "follow",
+            signal: fetchTimeout(),
+          });
+          if (!pageRes.ok) return empty;
+          collectCookies(pageRes);
+          const html = await pageRes.text();
+          const filePageUrl = grab(html, "video_url");
+          fastLabel = grab(html, "video_url_text");
+          if (!filePageUrl) return empty;
+          masterUrl = await followGated(filePageUrl, embedPageUrl);
+        } catch {
+          return empty;
+        }
+      }
+      if (!masterUrl) return empty;
+      /* 3. The HLS URL 302s once more (cdn -> nvms5-b) and returns
+         the master playlist; parse its variants the same way the
+         XNXX branch parses setVideoHLS. */
+      let masterText = "";
+      try {
+        const masterRes = await fetch(masterUrl, {
+          headers: ua,
+          redirect: "follow",
+          signal: fetchTimeout(),
+        });
+        if (!masterRes.ok) return empty;
+        masterUrl = masterRes.url;
+        masterText = await masterRes.text();
+      } catch {
+        return empty;
+      }
+      if (!masterText.includes("#EXTM3U")) {
+        return done({
+          fileUrl: masterUrl,
+          hdFileUrl: null,
+          fastLabel,
+          streams: [{ url: masterUrl, label: fastLabel ?? "Auto", hls: true }],
+          expiresAt: parseExpiryFromUrl(masterUrl),
+        });
+      }
+      const lines = masterText.split(/\r?\n/);
+      type PStream = { url: string; label: string; hls: boolean; height: number };
+      const byHeight = new Map<number, PStream>();
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? "";
+        if (!line.startsWith("#EXT-X-STREAM-INF")) continue;
+        const nm = line.match(/RESOLUTION=\d+x(\d{3,4})/);
+        const next = (lines[i + 1] ?? "").trim();
+        if (!nm || !nm[1] || !next || next.startsWith("#")) continue;
+        const h = parseInt(nm[1], 10);
+        if (!byHeight.has(h))
+          byHeight.set(h, { url: new URL(next, masterUrl).toString(), label: `${h}p`, hls: true, height: h });
+      }
+      const sorted = [...byHeight.values()].sort((a, b) => a.height - b.height);
+      if (sorted.length === 0) {
+        return done({
+          fileUrl: masterUrl,
+          hdFileUrl: null,
+          fastLabel,
+          streams: [{ url: masterUrl, label: fastLabel ?? "Auto", hls: true }],
+          expiresAt: parseExpiryFromUrl(masterUrl),
+        });
+      }
+      const streams = sorted.map(({ url, label, hls }) => ({ url, label, hls }));
+      const fastEntry =
+        (fastLabel ? sorted.find((s) => s.label === fastLabel) : undefined) ??
+        sorted.find((s) => s.height === 480) ??
+        sorted[0]!;
+      const hdEntry = sorted[sorted.length - 1]!;
+      return done({
+        fileUrl: fastEntry.url,
+        hdFileUrl: hdEntry.url !== fastEntry.url ? hdEntry.url : null,
+        fastLabel: fastEntry.label,
         streams,
         expiresAt: parseExpiryFromUrl(fastEntry.url),
       });
