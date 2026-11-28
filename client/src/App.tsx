@@ -1029,7 +1029,22 @@ function EmbedPlayer({ v, preroll, pauseBanner }: { v: Video; preroll?: AdCreati
       triedLabelsRef.current = new Set();
     }
     const list = d.streams.length > 0 ? d.streams : d.fileUrl ? [{ url: d.fileUrl, label: d.fastLabel ?? "Video", hls: false }] : [];
-    if (list.length === 0) return;
+    if (list.length === 0) {
+      /* The resolve came back with no playable file (a transient
+         server-side failure): the native player has not had a real
+         chance yet, so spend the one re-resolve before the embed.
+         A second empty answer means the source really has nothing
+         — then the embed player is the last resort. */
+      if (retries < 1) {
+        freshAdoptRef.current = { armed: true, dataAt: fileQ.dataUpdatedAt ?? 0 };
+        setRetries(1);
+        setRetryNonce((n) => n + 1);
+        void queryClient.invalidateQueries({ queryKey: ["embedFile", v.id] });
+      } else {
+        setFileFailed(true);
+      }
+      return;
+    }
     const order = attemptOrder.length > 0 ? attemptOrder : list;
     const chosen = list.find((s) => s.label === selLabel) ?? order.find((s) => !triedLabelsRef.current.has(s.label)) ?? order[0];
     if (!chosen) return;
@@ -1047,7 +1062,7 @@ function EmbedPlayer({ v, preroll, pauseBanner }: { v: Video; preroll?: AdCreati
       setPinned({ url: proxied, directUrl: chosen.url, viaProxy: proxied !== chosen.url, label: chosen.label, hls: chosen.hls, nonce: retryNonce });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileQ.data, fileQ.isError, selLabel, retryNonce, fileFailed, isGatedIframe, attemptOrder]);
+  }, [fileQ.data, fileQ.isError, selLabel, retryNonce, fileFailed, isGatedIframe, attemptOrder, retries]);
   if (!emb) return null;
   /* A video-file "thumbnail" (XNXX preview.mp4) is not a usable poster
      or <img> — browsers reject it as a poster and error it as an image.
@@ -1440,13 +1455,8 @@ function EmbedPlayer({ v, preroll, pauseBanner }: { v: Video; preroll?: AdCreati
           <span>Every resolution this video's source offers. Switching keeps your place.</span>
         </div>
       )}
-      {emb.kind === "iframe" && !nativeSrc && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-[var(--surface)] px-3 py-2.5 text-[13px] text-[var(--dim)]">
-          <span>Video not playing here?</span>
-          <a href={emb.src} target="_blank" rel="noopener noreferrer" className="font-bold text-[var(--accent)]">Open the player in a new tab</a>
-          <span>— some sources block playback inside apps, but the same link plays in your browser.</span>
-        </div>
-      )}
+      {/* No note under the iframe fallback (owner's rule, 2026-11-28):
+          the embed player is the last resort and shows on its own. */}
     </>
   );
 }
