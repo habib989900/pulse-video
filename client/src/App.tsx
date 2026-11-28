@@ -1549,6 +1549,31 @@ export function App() {
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
   const [suggOpen, setSuggOpen] = useState(false);
+  /* Search bar: collapsed on phones until the search icon is tapped
+     (like the reference site's mobile header); always visible on
+     desktop. chromeHidden auto-hides the header + bottom tab bar
+     while scrolling down, and shows them again on scroll up. */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const chromeHiddenRef = useRef(false);
+  const lastScrollYRef = useRef(0);
+  useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
+  useEffect(() => {
+    const setHidden = (v: boolean) => { if (chromeHiddenRef.current !== v) { chromeHiddenRef.current = v; setChromeHidden(v); } };
+    const onScroll = () => {
+      const y = window.scrollY;
+      const last = lastScrollYRef.current;
+      lastScrollYRef.current = y;
+      /* Never hide while the user is searching or the menu is open. */
+      if (searchOpen || suggOpen || drawer) { setHidden(false); return; }
+      if (y <= 0) { setHidden(false); return; }
+      if (y > last + 4 && y > 120) setHidden(true);
+      else if (y < last - 4) setHidden(false);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [searchOpen, suggOpen, drawer]);
   const [shareOpen, setShareOpen] = useState(false);
   const [dlBusy, setDlBusy] = useState(false);
   /* Feed-listing period filter, like the reference site's period
@@ -2390,7 +2415,7 @@ export function App() {
       return VIDEOS.filter((v) => norm(v.title).includes(q) || norm(v.category) === q || v.tags.some((t) => norm(t).includes(q)) || norm(v.creator).includes(q)); }
     if (l.kind === "tag") { const q = l.name.toLowerCase(); return VIDEOS.filter((v) => v.tags.includes(q) || v.category.toLowerCase() === q); }
     if (l.kind === "category") return VIDEOS.filter((v) => v.category === l.name || v.tags.includes(l.name.toLowerCase()));
-    if (l.kind === "creator") return VIDEOS.filter((v) => v.creator === l.name);
+    if (l.kind === "creator") return VIDEOS.filter((v) => v.creator === l.name || v.models.includes(l.name)); /* Match the Models-tab count (creator OR models) — a model listed in a video's Models chips must appear on their page. */
     if (l.kind === "channel") { const ch = CHANNELS.find((c) => c.name === l.name); return ch ? VIDEOS.filter((v) => v.creator === ch.creator || v.channel === ch.name) : []; }
     let feed: Video[];
     if (l.name === "Recommended") feed = recommendedList;
@@ -2766,7 +2791,7 @@ export function App() {
           three fixed rows (nav row ~54px + search row ~56px + partner
           strip ~40px); a floor only — the header still grows if its
           content ever needs more room. */}
-      <header className="sticky top-0 z-40 min-h-[150px] border-b border-[var(--border)] bg-[var(--surface)]/95 pt-safe backdrop-blur">
+      <header className={`sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--surface)]/95 pt-safe backdrop-blur transition-transform duration-300 ${chromeHidden ? "-translate-y-full" : ""} ${searchOpen ? "min-h-[150px]" : "min-h-[92px] md:min-h-[150px]"}`}>
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
           <button type="button" aria-label="Open menu" onClick={() => setDrawer(true)} className="p-1.5 text-white transition active:scale-90"><Icon n="menu" size={28} tone="accent" /></button>
           <button type="button" aria-label="Pulse Video home" onClick={() => goTab("home")} className="flex shrink-0 items-center transition active:scale-[0.97]">
@@ -2780,6 +2805,7 @@ export function App() {
             <button type="button" onClick={openHistory} className="py-1 hover:text-white">History</button>
           </nav>
           <div className="ml-auto flex items-center gap-1 md:gap-3">
+            <button type="button" aria-label={searchOpen ? "Close search" : "Search"} aria-expanded={searchOpen} onClick={() => setSearchOpen(!searchOpen)} className="p-1.5 text-white transition active:scale-90 md:hidden"><Icon n="search" size={21} tone="accent" /></button>
             <button type="button" aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-pressed={theme === "light"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="p-1.5 text-white transition active:scale-90"><Icon n={theme === "dark" ? "sun" : "moon"} size={21} tone="accent" /></button>
             <button type="button" aria-label="Watch history" onClick={openHistory} className="p-1.5 text-white transition active:scale-90"><Icon n="history" tone="accent" /></button>
             <div className="relative">
@@ -2800,12 +2826,12 @@ export function App() {
             <button type="button" aria-label="Your profile" onClick={() => goTab("profile")} className="p-1.5 text-white transition active:scale-90"><Icon n="user" tone="accent" /></button>
           </div>
         </div>
-        <div className="mx-auto max-w-6xl px-4 pb-3">
+        <div className={`mx-auto max-w-6xl px-4 pb-3 ${searchOpen ? "block" : "hidden md:block"}`}>
           {suggOpen && suggCount > 0 && (
             <button type="button" aria-label="Close search suggestions" tabIndex={-1} onClick={() => setSuggOpen(false)} className="fixed inset-0 z-40 cursor-default" />
           )}
           <label className="relative z-50 block">
-            <input aria-label="Search videos, models, tags" value={query} onChange={(e) => { setQuery(e.target.value); setSuggOpen(e.target.value.trim().length >= 2); }} onFocus={() => { if (query.trim().length >= 2) setSuggOpen(true); }} onKeyDown={(e) => { if (e.key === "Escape") setSuggOpen(false); }} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+            <input ref={searchInputRef} aria-label="Search videos, models, tags" value={query} onChange={(e) => { setQuery(e.target.value); setSuggOpen(e.target.value.trim().length >= 2); }} onFocus={() => { if (query.trim().length >= 2) setSuggOpen(true); }} onKeyDown={(e) => { if (e.key === "Escape") { setSuggOpen(false); if (!e.currentTarget.value.trim()) setSearchOpen(false); } }} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
             {query
               ? <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setSuggOpen(false); if (listing?.kind === "search") goTab("home"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
               : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
@@ -3814,7 +3840,7 @@ export function App() {
       )}
 
       {/* ===== BOTTOM TAB BAR — identical on mobile & desktop ===== */}
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-[var(--surface)]/97 pb-safe backdrop-blur">
+      <nav aria-label="Main" className={`fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-[var(--surface)]/97 pb-safe backdrop-blur transition-transform duration-300 ${chromeHidden ? "translate-y-full" : ""}`}>
         <div className="mx-auto grid max-w-6xl grid-cols-5 px-2">
           {bottomTabs.map((t) => {
             const active = navActive === t.key && !drawer && !authView;
