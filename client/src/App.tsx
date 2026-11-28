@@ -14,7 +14,7 @@ const AdminPanel = lazy(() => import("./AdminPanel").then((m) => ({ default: m.A
 
 
 
-const FEED_TABS = ["For you", "Trending", "New", "Top rated", "Longest"] as const;
+const FEED_TABS = ["For you", "Recommended", "Trending", "New", "Top rated", "Longest"] as const;
 const LETTERS = ["Popular", "0-9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"];
 const LANGS: { code: string; name: string }[] = [
   { code: "en", name: "English" }, { code: "es", name: "Español" }, { code: "de", name: "Deutsch" },
@@ -31,7 +31,7 @@ const LANG_CODES = new Set(LANGS.map((l) => l.code));
 
 const P: Record<string, string> = {
   globe: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3 12h18M12 3a13.6 13.6 0 0 1 0 18M12 3a13.6 13.6 0 0 0 0 18",
-  menu: "M4 6h16M4 12h16M4 18h10",
+  menu: "M4 6h16M4 12h16M4 18h16",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm10 2-4.3-4.3",
   history: "M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5m7 4v5l3 2",
   user: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2m14-16.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z",
@@ -226,7 +226,7 @@ function Motif({ v, big }: { v: Video; big?: boolean }) {
   );
 }
 
-export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: number; wide?: boolean; badge?: string; priority?: boolean }) {
+export function Thumb({ v, rank, wide, badge, priority, forcePreview }: { v: Video; rank?: number; wide?: boolean; badge?: string; priority?: boolean; forcePreview?: boolean }) {
   /* Until the photo arrives, the tile's placeholder is ONLY a plain
      white background with the site logo centered on it — no tile art,
      no gradient, no motif behind the name (the owner asked for the
@@ -236,7 +236,8 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
   const [imgState, setImgState] = useState<"loading" | "ok" | "err">("loading");
   /* .xxx-style hover preview: for freepornvideos.xxx videos the source
      publishes a short preview clip; hovering the card plays it muted
-     over the thumbnail. Other hosts have no preview clip. */
+     over the thumbnail. Other hosts have no preview clip. A touch
+     long-press (VideoCard) forces the same clip via forcePreview. */
   const [hovered, setHovered] = useState(false);
   const preview = previewUrlFor(v);
   useEffect(() => { setImgState("loading"); }, [v.id, v.thumbnailUrl]);
@@ -259,7 +260,7 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
       ) : (
         <img src={cardThumbUrl(v.thumbnailUrl) ?? v.thumbnailUrl} alt="" width={392} height={294} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={(e) => { const full = fullThumbUrl((e.currentTarget as HTMLImageElement).src); if (full && (e.currentTarget as HTMLImageElement).src !== full) { (e.currentTarget as HTMLImageElement).src = full; return; } setImgState("err"); }} className={`absolute inset-0 h-full w-full object-cover ${priority ? "transition-none" : "transition-opacity duration-300"} ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
-      {hovered && preview && imgState === "ok" && (
+      {(hovered || forcePreview) && preview && imgState === "ok" && (
         <video referrerPolicy="no-referrer" src={preview} muted loop autoPlay playsInline preload="auto" onCanPlay={(e) => { e.currentTarget.style.opacity = "1"; }} style={{ opacity: 0, transition: "opacity .3s" }} className="absolute inset-0 h-full w-full object-cover" aria-hidden="true" />
       )}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
@@ -277,11 +278,36 @@ function VideoCard({ v, onOpen, wide, rank, badge, hideMeta, priority, liked, on
   const models = [...new Set([v.creator, ...v.models].filter(Boolean))];
   const channel = v.channel;
   const wideCls = wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : "";
+  /* Touch preview: press-and-hold the thumbnail plays the preview clip
+     (the same clip as the desktop hover preview); a quick tap still
+     opens the video. The click that follows a long press is swallowed
+     so holding never opens the video by accident, and a finger that
+     slides (scrolling the list) cancels the timer. Only .xxx videos
+     have a preview clip, so other cards skip the timer entirely. */
+  const hasPreview = !!previewUrlFor(v);
+  const [pressPreview, setPressPreview] = useState(false);
+  const pressTimer = useRef<number | null>(null);
+  const longPressed = useRef(false);
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const startPress = (e: React.TouchEvent) => {
+    if (!hasPreview) return;
+    const t = e.touches[0]; if (!t) return;
+    pressStart.current = { x: t.clientX, y: t.clientY };
+    longPressed.current = false;
+    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(() => { longPressed.current = true; setPressPreview(true); }, 450);
+  };
+  const cancelPress = () => { if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = null; } setPressPreview(false); };
+  const movePress = (e: React.TouchEvent) => {
+    const p = pressStart.current; if (!p) return;
+    const t = e.touches[0]; if (!t) return;
+    if (Math.abs(t.clientX - p.x) > 12 || Math.abs(t.clientY - p.y) > 12) cancelPress();
+  };
   return (
     <div className="group w-full text-left">
       <div className="relative">
-        <button type="button" onClick={() => onOpen(v)} className="block w-full text-left transition duration-150 active:scale-[0.97] active:opacity-75" aria-label={`Watch: ${v.title}`}>
-          <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} priority={priority} />
+        <button type="button" onClick={() => { if (longPressed.current) { longPressed.current = false; return; } onOpen(v); }} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress} onContextMenu={(e) => e.preventDefault()} className="block w-full select-none text-left transition duration-150 active:scale-[0.97] active:opacity-75" aria-label={`Watch: ${v.title}`}>
+          <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} priority={priority} forcePreview={pressPreview} />
         </button>
         {onToggleLike && (
           <button type="button" aria-label={liked ? "Unlike video" : "Like video"} aria-pressed={!!liked} onClick={(e) => { e.stopPropagation(); onToggleLike(); }} className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow transition active:scale-90">
@@ -1399,7 +1425,7 @@ const pathRoute = (): string | null => {
     try { slug = decodeURIComponent(last); } catch { /* keep the raw segment */ }
     return `/${prev}/${slug}`;
   }
-  const singleHeads = ["most-popular", "top-rated", "latest-updates", "longest", "categories", "models", "channels", "tags", "creators", "profile", "history", "sitemap.xml", "robots.txt"];
+  const singleHeads = ["most-popular", "top-rated", "latest-updates", "longest", "recommended", "categories", "models", "channels", "tags", "creators", "profile", "history", "sitemap.xml", "robots.txt"];
   if (singleHeads.includes(last)) return `/${last}`;
   return null;
 };
@@ -1421,6 +1447,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
+  const [suggOpen, setSuggOpen] = useState(false);
   const queryRef = useRef(query);
   queryRef.current = query;
   const [, setFeed] = useState<(typeof FEED_TABS)[number]>("For you");
@@ -1821,7 +1848,7 @@ export function App() {
     setTab("home");
     setDrawer(false);
     if (l.kind === "search") setQuery(l.name);
-    const feedRoutes: Record<string, string> = { Trending: "/most-popular", "Top rated": "/top-rated", New: "/latest-updates", Longest: "/longest" };
+    const feedRoutes: Record<string, string> = { Trending: "/most-popular", "Top rated": "/top-rated", New: "/latest-updates", Longest: "/longest", Recommended: "/recommended" };
     const route = l.kind === "feed" ? (feedRoutes[l.name] ?? "/") : l.kind === "category" ? `/categories/${slugify(l.name)}` : l.kind === "creator" ? `/models/${slugify(l.name)}` : l.kind === "channel" ? `/channels/${slugify(l.name)}` : l.kind === "search" ? `/search/${slugify(l.name)}` : `/tag/${slugify(l.name)}`;
     nav(route);
     scrollTopInstant();
@@ -1900,7 +1927,7 @@ export function App() {
     if (head === "channels" && slug) { clear(); const c = effRef.current.channels.find((x) => slugify(x.name) === slug); if (c) { setListing({ kind: "channel", name: c.name }); setCurrent(null); setTab("home"); } else miss(); return; }
     if (head === "tags" || head === "creators" || head === "profile") { clear(); setTab(head === "creators" ? "creators" : head); setListing(null); setCurrent(null); return; }
     if (head === "video") { clear(); const v = effRef.current.videos.find((x) => x.id === slug); if (v) setCurrent(v); else miss(); return; }
-    if (head === "most-popular" || head === "top-rated" || head === "latest-updates" || head === "longest") { clear(); const f = head === "most-popular" ? "Trending" : head === "top-rated" ? "Top rated" : head === "latest-updates" ? "New" : "Longest"; setFeed(f); setListing({ kind: "feed", name: f }); setCurrent(null); setTab("home"); return; }
+    if (head === "most-popular" || head === "top-rated" || head === "latest-updates" || head === "longest" || head === "recommended") { clear(); const f = head === "most-popular" ? "Trending" : head === "top-rated" ? "Top rated" : head === "latest-updates" ? "New" : head === "recommended" ? "Recommended" : "Longest"; setFeed(f); setListing({ kind: "feed", name: f }); setCurrent(null); setTab("home"); return; }
     if (head === "search") { clear(); if (slug) { const q = fromSlug(slug); setListing({ kind: "search", name: q }); setQuery(q); setCurrent(null); setTab("home"); } return; }
     if (head === "tag") { clear(); if (slug) { const t = effRef.current.tags.find((x) => slugify(x.name) === slug); if (t) { setListing({ kind: "tag", name: t.name }); setCurrent(null); setTab("home"); } else miss(); } return; }
     /* Generated SEO files, rendered as pages so the owner can open,
@@ -2173,12 +2200,57 @@ export function App() {
   }, [becauseCat, VIDEOS]);
   const becauseTag = current?.tags[0] ?? becauseCat;
 
+  /* Smart search: live suggestions under the header box while typing —
+     matching videos (most viewed first), models, and tags. */
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return { videos: [] as Video[], models: [] as typeof CREATORS, tags: [] as string[] };
+    return {
+      videos: VIDEOS.filter((v) => v.title.toLowerCase().includes(q) || v.creator.toLowerCase().includes(q) || v.tags.some((t) => t.includes(q)) || v.category.toLowerCase().includes(q)).sort((a, b) => b.views - a.views).slice(0, 5),
+      models: CREATORS.filter((c) => c.name.toLowerCase().includes(q)).sort((a, b) => b.videos - a.videos).slice(0, 3),
+      tags: TAGS.filter((t) => t.name.toLowerCase().includes(q)).slice(0, 3).map((t) => t.name),
+    };
+  }, [query, VIDEOS, CREATORS, TAGS]);
+  const suggCount = suggestions.videos.length + suggestions.models.length + suggestions.tags.length;
+
+  /* "Recommended for you": score unwatched videos from the viewer's own
+     signals — liked videos weigh most, saved next, watched and followed
+     models less — plus a small popularity/quality nudge, so a fresh
+     viewer still gets the best videos. */
+  const recommendedList = useMemo(() => {
+    const watched = new Set(history);
+    const likedSet = new Set(likes);
+    const savedSet = new Set(saves);
+    const seed: Video[] = [];
+    for (const v of VIDEOS) if (likedSet.has(v.id) || savedSet.has(v.id)) seed.push(v);
+    for (const id of history.slice(0, 5)) { const v = byId(id); if (v) seed.push(v); }
+    const catW = new Map<string, number>(); const tagW = new Map<string, number>(); const creatorW = new Map<string, number>();
+    for (const v of seed) {
+      const w = likedSet.has(v.id) ? 3 : savedSet.has(v.id) ? 2 : 1;
+      if (v.category) catW.set(v.category, (catW.get(v.category) ?? 0) + w);
+      for (const t of v.tags) tagW.set(t, (tagW.get(t) ?? 0) + w);
+      creatorW.set(v.creator, (creatorW.get(v.creator) ?? 0) + w);
+      for (const m of v.models ?? []) creatorW.set(m, (creatorW.get(m) ?? 0) + w);
+    }
+    for (const f of follows) creatorW.set(f, (creatorW.get(f) ?? 0) + 2);
+    return VIDEOS.filter((v) => !watched.has(v.id)).map((v) => {
+      let s = 0;
+      s += (catW.get(v.category) ?? 0) * 2;
+      for (const t of v.tags) s += tagW.get(t) ?? 0;
+      s += (creatorW.get(v.creator) ?? 0) * 2;
+      for (const m of v.models ?? []) s += creatorW.get(m) ?? 0;
+      s += Math.log10(v.views + 10) * 0.5 + v.rating / 100;
+      return { v, s };
+    }).sort((a, b) => b.s - a.s).slice(0, 8).map(({ v }) => v);
+  }, [VIDEOS, likes, saves, history, follows]);
+
   const listingVideos = (l: Listing): Video[] => {
     if (l.kind === "search") { const q = l.name.toLowerCase(); return VIDEOS.filter((v) => v.title.toLowerCase().includes(q) || v.category.toLowerCase() === q || v.tags.some((t) => t.includes(q)) || v.creator.toLowerCase().includes(q)); }
     if (l.kind === "tag") { const q = l.name.toLowerCase(); return VIDEOS.filter((v) => v.tags.includes(q) || v.category.toLowerCase() === q); }
     if (l.kind === "category") return VIDEOS.filter((v) => v.category === l.name || v.tags.includes(l.name.toLowerCase()));
     if (l.kind === "creator") return VIDEOS.filter((v) => v.creator === l.name);
     if (l.kind === "channel") { const ch = CHANNELS.find((c) => c.name === l.name); return ch ? VIDEOS.filter((v) => v.creator === ch.creator || v.channel === ch.name) : []; }
+    if (l.name === "Recommended") return recommendedList;
     if (l.name === "Trending") return [...VIDEOS].sort((a, b) => b.views - a.views);
     if (l.name === "New") return [...VIDEOS].sort((a, b) => a.days - b.days);
     if (l.name === "Top rated") return [...VIDEOS].sort((a, b) => b.rating - a.rating);
@@ -2187,7 +2259,7 @@ export function App() {
   };
   const listingCount = (_l: Listing, list: Video[]): string => `${list.length} video${list.length === 1 ? "" : "s"}`;
   const listingHeading = (l: Listing): string => {
-    if (l.kind === "feed") return l.name === "Trending" ? "Most Viewed Videos" : l.name === "Top rated" ? "Top Rated Videos" : l.name === "New" ? "New Videos" : "Longest Videos";
+    if (l.kind === "feed") return l.name === "Trending" ? "Most Viewed Videos" : l.name === "Top rated" ? "Top Rated Videos" : l.name === "New" ? "New Videos" : l.name === "Recommended" ? "Recommended Videos" : "Longest Videos";
     if (l.kind === "tag") return `Videos tagged “${l.name}”`;
     if (l.kind === "search") return `${l.name} Videos`;
     if (l.kind === "creator" || l.kind === "channel") return l.name;
@@ -2286,7 +2358,7 @@ export function App() {
       if (!el) { el = document.createElement("meta"); el.setAttribute(attr, key); document.head.appendChild(el); }
       el.setAttribute("content", content);
     };
-    const feedRoutes: Record<string, string> = { Trending: "/most-popular", "Top rated": "/top-rated", New: "/latest-updates", Longest: "/longest" };
+    const feedRoutes: Record<string, string> = { Trending: "/most-popular", "Top rated": "/top-rated", New: "/latest-updates", Longest: "/longest", Recommended: "/recommended" };
     const route =
       legalView ? (legalView === "terms" ? "/terms" : "/privacy") :
       adminView ? "/panel" :
@@ -2548,7 +2620,7 @@ export function App() {
           content ever needs more room. */}
       <header className="sticky top-0 z-40 min-h-[150px] border-b border-[var(--border)] bg-[var(--surface)]/95 pt-safe backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
-          <button type="button" aria-label="Open menu" onClick={() => setDrawer(true)} className="p-1.5 text-white transition active:scale-90"><Icon n="menu" tone="accent" /></button>
+          <button type="button" aria-label="Open menu" onClick={() => setDrawer(true)} className="p-1.5 text-white transition active:scale-90"><Icon n="menu" size={28} tone="accent" /></button>
           <button type="button" aria-label="Pulse Video home" onClick={() => goTab("home")} className="flex shrink-0 items-center transition active:scale-[0.97]">
             <LogoText text={texts.logoText ?? "PULSE VIDEO"} />
           </button>
@@ -2581,11 +2653,57 @@ export function App() {
           </div>
         </div>
         <div className="mx-auto max-w-6xl px-4 pb-3">
-          <label className="relative block">
-            <input aria-label="Search videos, models, tags" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
+          {suggOpen && suggCount > 0 && (
+            <button type="button" aria-label="Close search suggestions" tabIndex={-1} onClick={() => setSuggOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+          )}
+          <label className="relative z-50 block">
+            <input aria-label="Search videos, models, tags" value={query} onChange={(e) => { setQuery(e.target.value); setSuggOpen(e.target.value.trim().length >= 2); }} onFocus={() => { if (query.trim().length >= 2) setSuggOpen(true); }} onKeyDown={(e) => { if (e.key === "Escape") setSuggOpen(false); }} placeholder={texts.searchPlaceholder} className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-3 pl-4 pr-11 text-sm text-white placeholder:text-[var(--dim)] focus:border-[var(--accent)] focus:outline-none" />
             {query
-              ? <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); if (listing?.kind === "search") goTab("home"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
+              ? <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setSuggOpen(false); if (listing?.kind === "search") goTab("home"); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--accent)]"><Icon n="x" size={18} tone="accent" /></button>
               : <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--accent)]"><Icon n="search" size={19} tone="accent" /></span>}
+            {suggOpen && suggCount > 0 && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[70vh] overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface)] py-2 shadow-2xl" role="listbox" aria-label="Search suggestions">
+                {suggestions.videos.length > 0 && (
+                  <div>
+                    <p className="px-4 pb-1 pt-1 text-[11px] font-black uppercase tracking-wider text-[var(--dim)]">Videos</p>
+                    {suggestions.videos.map((v) => (
+                      <button key={v.id} type="button" onClick={() => { setSuggOpen(false); setQuery(""); openVideo(v); }} className="flex w-full items-center gap-3 px-4 py-2 text-left transition active:bg-[var(--surface2)]">
+                        {cardThumbUrl(v.thumbnailUrl) ? <img src={cardThumbUrl(v.thumbnailUrl) ?? undefined} alt="" className="h-10 w-14 shrink-0 rounded-lg object-cover" loading="lazy" /> : <span className="flex h-10 w-14 shrink-0 items-center justify-center rounded-lg bg-[var(--surface2)] text-[10px] font-black text-white">PULSE</span>}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-white">{v.title}</span>
+                          <span className="block text-xs text-[var(--dim)]">{fmtViews(v.views)} views · {fmtDur(v.durationSec)}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {suggestions.models.length > 0 && (
+                  <div>
+                    <p className="px-4 pb-1 pt-2 text-[11px] font-black uppercase tracking-wider text-[var(--dim)]">Models</p>
+                    {suggestions.models.map((c) => (
+                      <button key={c.name} type="button" onClick={() => { setSuggOpen(false); setQuery(""); openListing({ kind: "creator", name: c.name }); }} className="flex w-full items-center gap-3 px-4 py-2 text-left transition active:bg-[var(--surface2)]">
+                        <Avatar name={c.name} g={c.g} size={32} photo={c.photo} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-white">{c.name}</span>
+                          <span className="block text-xs text-[var(--dim)]">{c.videos} videos</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {suggestions.tags.length > 0 && (
+                  <div>
+                    <p className="px-4 pb-1 pt-2 text-[11px] font-black uppercase tracking-wider text-[var(--dim)]">Tags</p>
+                    {suggestions.tags.map((t) => (
+                      <button key={t} type="button" onClick={() => { setSuggOpen(false); setQuery(""); openListing({ kind: "tag", name: t }); }} className="flex w-full items-center gap-3 px-4 py-2 text-left transition active:bg-[var(--surface2)]">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--surface2)] text-sm font-black text-[var(--accent)]">#</span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold capitalize text-white">{t}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </label>
         </div>
         <div className="no-scrollbar flex items-center gap-6 overflow-x-auto border-t border-[var(--border)] px-4 py-2.5 text-[13px] font-bold tracking-wide md:justify-center">
@@ -3129,6 +3247,19 @@ export function App() {
             </section>
             )}
 
+            {recommendedList.length > 0 && (
+            <section aria-label="Recommended for you" className="pt-7 [content-visibility:auto] [contain-intrinsic-size:auto_900px]">
+              <div className="flex items-baseline justify-between">
+                <h2 className="font-display text-lg font-black sm:text-xl text-white">Recommended for you</h2>
+                <button type="button" onClick={() => { setFeed("Recommended"); openListing({ kind: "feed", name: "Recommended" }); }} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
+              </div>
+              <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
+                {recommendedList.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
+              </div>
+            <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Recommended"); openListing({ kind: "feed", name: "Recommended" }); }} />
+            </section>
+            )}
+
             {/* The home showcase lists only models that actually have
                 videos; the full list (including empty ones) stays on
                 the Models tab. With none, the section hides instead of
@@ -3401,6 +3532,12 @@ export function App() {
             <div className="flex items-center justify-between">
               <LogoText text={texts.logoText ?? "PULSE VIDEO"} />
               <button type="button" aria-label="Close menu" onClick={() => setDrawer(false)} className="p-2 text-white"><Icon n="x" tone="accent" /></button>
+            </div>
+            <p className="mt-4 text-sm font-bold tracking-[0.14em] text-[var(--dim)]">VIDEOS</p>
+            <div className="mt-1 divide-y divide-[var(--border)] border-b border-[var(--border)]">
+              <button type="button" onClick={() => { setFeed("New"); openListing({ kind: "feed", name: "New" }); }} className="flex w-full items-center justify-between py-3.5 text-left text-sm text-white">Latest <span className="text-[var(--dim)]">›</span></button>
+              <button type="button" onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} className="flex w-full items-center justify-between py-3.5 text-left text-sm text-white">Top Rated <span className="text-[var(--dim)]">›</span></button>
+              <button type="button" onClick={() => { setFeed("Trending"); openListing({ kind: "feed", name: "Trending" }); }} className="flex w-full items-center justify-between py-3.5 text-left text-sm text-white">Most Viewed <span className="text-[var(--dim)]">›</span></button>
             </div>
             <div className="mt-2 divide-y divide-[var(--border)] border-y border-[var(--border)]">
               <button type="button" onClick={openHistory} className="flex w-full items-center gap-3.5 py-3.5 text-left text-sm text-white"><Icon n="history" tone="accent" /> History</button>
