@@ -91,6 +91,7 @@ const adminStateSchema = z.object({
     videoBottom: adCreativeSchema,
     videoTop: adCreativeSchema,
     pauseBanner: adCreativeSchema,
+    popup: adCreativeSchema,
   }),
   taxonomy: z.object({
     categories: taxOpSchema,

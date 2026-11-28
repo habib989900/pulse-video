@@ -559,6 +559,45 @@ function ShareModal({ url, title, onClose }: { url: string; title: string; onClo
   );
 }
 
+/* Popup ad: a modal over the site, once per visit. Shows a few
+   seconds after the page opens (only when the admin enabled it and it
+   has content). A close button or a tap on the backdrop hides it; it
+   never opens a new tab — that is the reference site's popunder
+   behaviour, which the owner does not want. */
+function PopupAd({ ad }: { ad: AdCreative }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!ad?.enabled) return;
+    const has = ad.kind === "image" ? ad.mediaUrl.trim() : ad.kind === "html" ? ad.html.trim() : "";
+    if (!has) return;
+    let seen = false;
+    try { seen = sessionStorage.getItem("pv-popup-shown") === "1"; } catch { /* storage unavailable */ }
+    if (seen) return;
+    const t = window.setTimeout(() => setVisible(true), 3000);
+    return () => window.clearTimeout(t);
+  }, [ad]);
+  if (!visible) return null;
+  const dismiss = () => {
+    try { sessionStorage.setItem("pv-popup-shown", "1"); } catch { /* storage unavailable */ }
+    setVisible(false);
+  };
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="Advertisement" onClick={dismiss}>
+      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl bg-black shadow-2xl ring-1 ring-white/20" onClick={(e) => e.stopPropagation()}>
+        <span className="absolute left-2 top-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">Ad</span>
+        <button type="button" aria-label="Close ad" onClick={dismiss} className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white transition active:scale-90"><Icon n="x" size={18} /></button>
+        {ad.kind === "html" ? (
+          <div className="overflow-hidden" dangerouslySetInnerHTML={{ __html: ad.html }} />
+        ) : ad.linkUrl.trim() ? (
+          <a href={ad.linkUrl} target="_blank" rel="noopener noreferrer sponsored"><img src={ad.mediaUrl} alt="Advertisement" loading="lazy" referrerPolicy="no-referrer" className="max-h-[80vh] w-full object-contain" /></a>
+        ) : (
+          <img src={ad.mediaUrl} alt="Advertisement" loading="lazy" referrerPolicy="no-referrer" className="max-h-[80vh] w-full object-contain" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PrerollAd({ ad, onDone }: { ad: AdCreative; onDone: () => void }) {
   const total = Math.max(0, Math.min(30, Math.floor(ad.skipAfterSec || 5)));
   const [left, setLeft] = useState(total);
@@ -3793,6 +3832,7 @@ export function App() {
           })}
         </div>
       </nav>
+      <PopupAd ad={ads.popup} />
       </>
       )}
     </div>

@@ -146,6 +146,7 @@ export type AdsConfig = {
   videoBottom: AdCreative;
   videoTop: AdCreative;
   pauseBanner: AdCreative;
+  popup: AdCreative;
 };
 const emptyAd = (kind: AdCreative["kind"] = "image"): AdCreative => ({ enabled: false, kind, mediaUrl: "", linkUrl: "", html: "", skipAfterSec: 5 });
 export const DEFAULT_ADS: AdsConfig = {
@@ -156,6 +157,7 @@ export const DEFAULT_ADS: AdsConfig = {
   videoBottom: emptyAd(),
   videoTop: emptyAd(),
   pauseBanner: emptyAd(),
+  popup: emptyAd(),
 };
 /* Defensive merge for a stored creative: wrong types fall back to the
    default instead of breaking the player or a banner slot. */
@@ -251,6 +253,7 @@ export function parseAdminState(payload: string | null | undefined): AdminState 
         videoBottom: normAd(DEFAULT_ADS.videoBottom, p.ads?.videoBottom),
         videoTop: normAd(DEFAULT_ADS.videoTop, p.ads?.videoTop),
         pauseBanner: normAd(DEFAULT_ADS.pauseBanner, p.ads?.pauseBanner),
+        popup: normAd(DEFAULT_ADS.popup, p.ads?.popup),
       },
       taxonomy: {
         categories: { ...emptyTax(), ...(p.taxonomy?.categories ?? {}) },
