@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
-import { cardThumbUrl, fullThumbUrl } from "./thumb";
+import { cardThumbUrl, fullThumbUrl, previewUrlFor } from "./thumb";
 import {
   buildEffective, buildRobotsTxt, buildSitemapXml, fmtDur, fmtViews, isVideoFileUrl,
   isoDateFromDays, isoDuration, parseAdminState, publicUrl, resolveEmbed, slugify,
@@ -79,7 +79,7 @@ const FILLED: Record<string, string> = {
 };
 
 export function Icon({ n, size = 22, className = "", tone = "default" }: { n: string; size?: number; className?: string; tone?: "default" | "accent" | "gold" }) {
-  const glow = tone === "accent" ? "drop-shadow-[0_0_7px_rgba(244,63,94,.55)]" : tone === "gold" ? "drop-shadow-[0_0_7px_rgba(245,158,11,.5)]" : "";
+  const glow = tone === "accent" ? "drop-shadow-[0_0_7px_rgba(91,141,239,.55)]" : tone === "gold" ? "drop-shadow-[0_0_7px_rgba(245,158,11,.5)]" : "";
   const f = FILLED[n];
   if (f) {
     const fill = tone === "accent" ? "url(#pg)" : tone === "gold" ? "url(#gg)" : "currentColor";
@@ -102,17 +102,17 @@ function GradientDefs() {
     <svg width="0" height="0" className="absolute" aria-hidden="true">
       <defs>
         <linearGradient id="pg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#fb7185" />
-          <stop offset="100%" stopColor="#e11d48" />
+          <stop offset="0%" stopColor="#93c5fd" />
+          <stop offset="100%" stopColor="#5b8def" />
         </linearGradient>
         <linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#fde68a" />
           <stop offset="100%" stopColor="#f59e0b" />
         </linearGradient>
         <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#ff8fab" />
-          <stop offset="55%" stopColor="#f43f5e" />
-          <stop offset="100%" stopColor="#be123c" />
+          <stop offset="0%" stopColor="#93c5fd" />
+          <stop offset="55%" stopColor="#5b8def" />
+          <stop offset="100%" stopColor="#1a56db" />
         </linearGradient>
       </defs>
     </svg>
@@ -121,7 +121,7 @@ function GradientDefs() {
 
 function LogoHeart({ size = 21 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className="mx-0.5 shrink-0 drop-shadow-[0_2px_7px_rgba(244,63,94,.65)]" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" className="mx-0.5 shrink-0 drop-shadow-[0_2px_7px_rgba(91,141,239,.65)]" aria-hidden="true">
       <path d="M12 20.7C6.4 16.9 3 13.6 3 9.9 3 7.2 5 5 7.5 5c1.7 0 3.4.9 4.5 2.4C13.1 5.9 14.8 5 16.5 5 19 5 21 7.2 21 9.9c0 3.7-3.4 7-9 10.8Z" fill="url(#hg)" />
       <ellipse cx="8.4" cy="8.4" rx="2.7" ry="1.7" fill="#ffffff" opacity=".55" transform="rotate(-24 8.4 8.4)" />
     </svg>
@@ -234,9 +234,14 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
      over it once loaded; a video with no photo, or one whose photo
      fails, keeps the white placeholder with the logo. */
   const [imgState, setImgState] = useState<"loading" | "ok" | "err">("loading");
+  /* .xxx-style hover preview: for freepornvideos.xxx videos the source
+     publishes a short preview clip; hovering the card plays it muted
+     over the thumbnail. Other hosts have no preview clip. */
+  const [hovered, setHovered] = useState(false);
+  const preview = previewUrlFor(v);
   useEffect(() => { setImgState("loading"); }, [v.id, v.thumbnailUrl]);
   return (
-    <div className={`relative shrink-0 overflow-hidden rounded-xl [container-type:inline-size] ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : "w-full"}`} style={{ aspectRatio: "16/9", background: "#ffffff" }}>
+    <div className={`relative shrink-0 overflow-hidden rounded-xl [container-type:inline-size] ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : "w-full"}`} style={{ aspectRatio: "16/9", background: "#ffffff" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {imgState !== "ok" && (
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center px-1" aria-hidden="true">
           <span className="font-display thumb-name flex items-center justify-center font-black tracking-tight">
@@ -254,23 +259,61 @@ export function Thumb({ v, rank, wide, badge, priority }: { v: Video; rank?: num
       ) : (
         <img src={cardThumbUrl(v.thumbnailUrl) ?? v.thumbnailUrl} alt="" width={392} height={294} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} onLoad={() => setImgState("ok")} onError={(e) => { const full = fullThumbUrl((e.currentTarget as HTMLImageElement).src); if (full && (e.currentTarget as HTMLImageElement).src !== full) { (e.currentTarget as HTMLImageElement).src = full; return; } setImgState("err"); }} className={`absolute inset-0 h-full w-full object-cover ${priority ? "transition-none" : "transition-opacity duration-300"} ${imgState === "ok" ? "opacity-100" : "opacity-0"}`} />
       ))}
+      {hovered && preview && imgState === "ok" && (
+        <video referrerPolicy="no-referrer" src={preview} muted loop autoPlay playsInline preload="auto" onCanPlay={(e) => { e.currentTarget.style.opacity = "1"; }} style={{ opacity: 0, transition: "opacity .3s" }} className="absolute inset-0 h-full w-full object-cover" aria-hidden="true" />
+      )}
       {rank != null && <span className="font-display absolute left-2 top-1 text-[42px] font-black leading-none text-[var(--accent)] drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]">{rank}</span>}
       {badge && <span className="absolute left-2 top-2 rounded-md bg-[var(--accent)] px-2 py-0.5 text-[11px] font-black tracking-wide text-white shadow">{badge}</span>}
-      {v.hd && <span className="absolute right-2 top-2 rounded-md bg-amber-400 px-2 py-0.5 text-[11px] font-black tracking-wide text-black shadow-md ring-1 ring-black/10">4K</span>}
-      {v.duration && <span className="absolute bottom-2 right-2 rounded-full bg-white/95 px-2 py-0.5 text-xs font-bold text-black shadow-md ring-1 ring-black/10">{v.duration}</span>}
+      {v.hd && <span className="absolute bottom-2 left-2 rounded-md bg-amber-400 px-2 py-0.5 text-[11px] font-black tracking-wide text-black shadow-md ring-1 ring-black/10">4K</span>}
+      {v.duration && <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-bold text-white shadow ring-1 ring-white/20">{v.duration}</span>}
     </div>
   );
 }
 
-function VideoCard({ v, onOpen, wide, rank, badge, hideMeta, priority }: { v: Video; onOpen: (v: Video) => void; wide?: boolean; rank?: number; badge?: string; hideMeta?: boolean; priority?: boolean }) {
+function VideoCard({ v, onOpen, wide, rank, badge, hideMeta, priority, liked, onToggleLike, onOpenListing }: { v: Video; onOpen: (v: Video) => void; wide?: boolean; rank?: number; badge?: string; hideMeta?: boolean; priority?: boolean; liked?: boolean; onToggleLike?: () => void; onOpenListing?: (l: Listing) => void }) {
   const cardBadge = badge ?? (v.featured ? "FEATURED" : v.badgeNew ? "NEW" : undefined);
-  const meta = [v.hasViews ? `${fmtViews(v.views)} views` : null, v.hasDate ? v.age : null, v.hasRating ? `${v.rating}% liked` : null].filter(Boolean).join(" · ");
+  /* .xxx shows the channel first, then every model, under the title —
+     each a link to that model/channel page. */
+  const models = [...new Set([v.creator, ...v.models].filter(Boolean))];
+  const channel = v.channel;
+  const wideCls = wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : "";
   return (
-    <button type="button" onClick={() => onOpen(v)} className="group block w-full text-left transition duration-150 active:scale-[0.97] active:opacity-75" aria-label={`Watch: ${v.title}`}>
-      <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} priority={priority} />
-      <span className={`mt-2 line-clamp-2 block text-[13px] font-semibold leading-[1.35] text-white sm:text-sm ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : ""}`}>{v.title}</span>
-      {!hideMeta && meta && <span className={`mt-0.5 block text-xs text-[var(--dim)] sm:text-[13px] ${wide ? "w-[84vw] max-w-[460px] sm:w-[430px]" : ""}`}>{meta}</span>}
-    </button>
+    <div className="group w-full text-left">
+      <div className="relative">
+        <button type="button" onClick={() => onOpen(v)} className="block w-full text-left transition duration-150 active:scale-[0.97] active:opacity-75" aria-label={`Watch: ${v.title}`}>
+          <Thumb v={v} rank={rank} wide={wide} badge={cardBadge} priority={priority} />
+        </button>
+        {onToggleLike && (
+          <button type="button" aria-label={liked ? "Unlike video" : "Like video"} aria-pressed={!!liked} onClick={(e) => { e.stopPropagation(); onToggleLike(); }} className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow transition active:scale-90">
+            <Icon n="heart" size={17} tone={liked ? "accent" : "default"} />
+          </button>
+        )}
+      </div>
+      <button type="button" onClick={() => onOpen(v)} className={`mt-2 line-clamp-2 block text-left text-[13px] font-semibold leading-[1.35] text-white sm:text-sm ${wideCls}`}>{v.title}</button>
+      {models.length > 0 && (
+        <div className={`mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs sm:text-[13px] ${wideCls}`}>
+          {channel && (onOpenListing ? (
+            <button type="button" onClick={() => onOpenListing({ kind: "channel", name: channel })} className="font-semibold text-[var(--dim)] transition hover:text-[var(--accent)]">{channel}</button>
+          ) : (
+            <span className="font-semibold text-[var(--dim)]">{channel}</span>
+          ))}
+          {models.map((m) => (onOpenListing ? (
+            <button key={m} type="button" onClick={() => onOpenListing({ kind: "creator", name: m })} className="font-medium text-[var(--accent)] transition hover:underline">{m}</button>
+          ) : (
+            <span key={m} className="font-medium text-[var(--accent)]">{m}</span>
+          )))}
+        </div>
+      )}
+      {!hideMeta && (v.hasRating || v.hasViews || v.hasDate) && (
+        <span className={`mt-0.5 block text-xs text-[var(--dim)] sm:text-[13px] ${wideCls}`}>
+          {v.hasRating && <span className="font-bold text-[var(--accent)]">{v.rating}%</span>}
+          {v.hasRating && (v.hasViews || v.hasDate) ? " · " : null}
+          {v.hasViews && `${fmtViews(v.views)} views`}
+          {v.hasViews && v.hasDate ? " · " : null}
+          {v.hasDate && v.age}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -419,7 +462,7 @@ function PlayerSpinner({ label = "Loading video" }: { label?: string }) {
     <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center" role="status" aria-label={label}>
       <svg className="pv-spinner" width="52" height="52" viewBox="0 0 50 50" fill="none" aria-hidden="true">
         <circle cx="25" cy="25" r="20" stroke="rgba(255,255,255,.25)" strokeWidth="5" />
-        <path d="M45 25a20 20 0 0 0-20-20" stroke="#f43f5e" strokeWidth="5" strokeLinecap="round" />
+        <path d="M45 25a20 20 0 0 0-20-20" style={{ stroke: "var(--accent)" }} strokeWidth="5" strokeLinecap="round" />
       </svg>
     </span>
   );
@@ -1183,7 +1226,7 @@ function EmbedPlayer({ v, preroll }: { v: Video; preroll?: AdCreative }) {
                 <span className="text-sm font-medium tabular-nums">{fmtDur(Math.floor(curTime))} / {fmtDur(Math.floor(duration))}</span>
                 <span className="ml-auto flex items-center gap-1">
                   <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={() => setMuted(!muted)} className="p-1.5"><Icon n={muted || volume === 0 ? "mute" : "volume"} size={20} /></button>
-                  <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[#f43f5e] sm:block" />
+                  <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[var(--accent)] sm:block" />
                   {/* Playback speed, same menu style as the quality gear. */}
                   <SpeedMenu speed={speed} open={speedMenuOpen} onToggle={() => { setSpeedMenuOpen((o) => !o); setQMenuOpen(false); }} onSelect={(s) => { setSpeed(s); setSpeedMenuOpen(false); }} />
                   {/* Quality settings, on the video screen itself: the
@@ -2486,7 +2529,7 @@ export function App() {
             </label>
             {authView === "signup" && (
               <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-zinc-200">
-                <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} className="h-5 w-5 accent-[#f43f5e]" /> I am 18 or older
+                <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} className="h-5 w-5 accent-[var(--accent)]" /> I am 18 or older
               </label>
             )}
             <button type="submit" className="mt-6 w-full rounded-full bg-[var(--accent)] py-3.5 font-display text-sm font-black text-white">{authView === "login" ? "Log in" : "Sign up"}</button>
@@ -2503,7 +2546,7 @@ export function App() {
           three fixed rows (nav row ~54px + search row ~56px + partner
           strip ~40px); a floor only — the header still grows if its
           content ever needs more room. */}
-      <header className="sticky top-0 z-40 min-h-[150px] border-b border-[var(--border)] bg-black/95 pt-safe backdrop-blur">
+      <header className="sticky top-0 z-40 min-h-[150px] border-b border-[var(--border)] bg-[var(--surface)]/95 pt-safe backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
           <button type="button" aria-label="Open menu" onClick={() => setDrawer(true)} className="p-1.5 text-white transition active:scale-90"><Icon n="menu" tone="accent" /></button>
           <button type="button" aria-label="Pulse Video home" onClick={() => goTab("home")} className="flex shrink-0 items-center transition active:scale-[0.97]">
@@ -2564,7 +2607,7 @@ export function App() {
             <span className="mx-auto mt-8 flex items-center justify-center" role="status" aria-label="Loading">
               <svg className="pv-spinner" width="44" height="44" viewBox="0 0 50 50" fill="none" aria-hidden="true">
                 <circle cx="25" cy="25" r="20" stroke="rgba(255,255,255,.25)" strokeWidth="5" />
-                <path d="M45 25a20 20 0 0 0-20-20" stroke="#f43f5e" strokeWidth="5" strokeLinecap="round" />
+                <path d="M45 25a20 20 0 0 0-20-20" style={{ stroke: "var(--accent)" }} strokeWidth="5" strokeLinecap="round" />
               </svg>
             </span>
             {adminQ.isError ? (
@@ -2646,7 +2689,7 @@ export function App() {
                   </div>
                 )}
                 <div className="mt-2 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {history.slice(0, 200).map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} /> : null; })}
+                  {history.slice(0, 200).map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} /> : null; })}
                 </div>
               </>
             )}
@@ -2692,7 +2735,7 @@ export function App() {
                   <span className="text-sm font-medium tabular-nums">{fmtTime((progress / 100) * current.durationSec)} / {current.duration}</span>
                   <span className="ml-auto flex items-center gap-1">
                     <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={() => setMuted(!muted)} className="p-1.5"><Icon n={muted ? "mute" : "volume"} size={20} tone="accent" /></button>
-                    <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[#f43f5e] sm:block" />
+                    <input aria-label="Volume" type="range" min={0} max={100} value={muted ? 0 : volume} onChange={(e) => { setVolume(Number(e.target.value)); setMuted(false); }} className="hidden w-16 accent-[var(--accent)] sm:block" />
                     <SpeedMenu speed={speed} open={speedMenuOpen} onToggle={() => setSpeedMenuOpen((o) => !o)} onSelect={(s) => { setSpeed(s); setSpeedMenuOpen(false); }} />
                     <button type="button" aria-label={artTheater ? "Exit theater mode" : "Theater mode"} aria-pressed={artTheater} onClick={() => setArtTheater((t) => !t)} className="hidden p-1.5 md:block"><Icon n="theater" size={20} tone="accent" /></button>
                     <button type="button" aria-label={artFs.big ? "Exit fullscreen" : "Fullscreen"} aria-pressed={artFs.big} onClick={artFs.toggle} className="p-1.5"><Icon n={artFs.big ? "compress" : "expand"} size={20} tone="accent" /></button>
@@ -2795,7 +2838,7 @@ export function App() {
                 <>
                   <h2 className="font-display mb-3 mt-6 flex items-center gap-2 text-lg font-black text-white sm:text-xl">Suggested for you <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-black text-black">Ad</span></h2>
                   <div className="flex flex-col gap-5">
-                    {suggested.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                    {suggested.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
                   </div>
                   <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "feed", name: "Top rated" })} />
                 </>
@@ -2808,7 +2851,7 @@ export function App() {
                 </button>
               </div>
               <div className="flex flex-col gap-5">
-                {upNext.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} badge={i === 0 ? "UP NEXT" : undefined} />)}
+                {upNext.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} badge={i === 0 ? "UP NEXT" : undefined} />)}
               </div>
               {upNext[0] && <NextButton label="Next video" onClick={() => { const n = upNext[0]; if (n) openVideo(n); }} />}
             </aside>
@@ -2818,7 +2861,7 @@ export function App() {
               <section aria-label="More like this" className="pt-8">
                 <h2 className="font-display text-lg font-black text-white sm:text-xl">More like this</h2>
                 <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {moreLikeThis.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                  {moreLikeThis.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
                 </div>
                 <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "category", name: current.category })} />
               </section>
@@ -2831,7 +2874,7 @@ export function App() {
                   <button type="button" onClick={() => openListing({ kind: "tag", name: current.tags[0] ?? current.category })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
                 </div>
                 <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {tagTitleMatches.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                  {tagTitleMatches.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
                 </div>
                 <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "tag", name: current.tags[0] ?? current.category })} />
               </section>
@@ -2843,7 +2886,7 @@ export function App() {
                 <button type="button" onClick={() => openListing({ kind: "tag", name: becauseTag })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                {VIDEOS.filter((v) => v.id !== current.id && (v.tags.includes(becauseTag) || v.category === current.category)).slice(0, 4).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                {VIDEOS.filter((v) => v.id !== current.id && (v.tags.includes(becauseTag) || v.category === current.category)).slice(0, 4).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
               </div>
               <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "tag", name: becauseTag })} />
             </section>
@@ -2854,7 +2897,7 @@ export function App() {
                 <button type="button" onClick={() => openListing({ kind: "feed", name: "Trending" })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                {trending.slice(0, 6).map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} rank={i + 1} />)}
+                {trending.slice(0, 6).map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} rank={i + 1} />)}
               </div>
               <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "feed", name: "Trending" })} />
             </section>
@@ -2998,7 +3041,7 @@ export function App() {
                     <>
                       <p className="font-semibold text-white">No videos here yet</p>
                       <p className="mt-1 text-sm text-[var(--dim)]">Here are the top rated videos instead:</p>
-                      <div className="mt-5 mx-auto flex w-full max-w-[760px] flex-col gap-6 text-left">{topRated.slice(0, 4).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}</div>
+                      <div className="mt-5 mx-auto flex w-full max-w-[760px] flex-col gap-6 text-left">{topRated.slice(0, 4).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}</div>
                     </>
                   ) : (
                     <>
@@ -3010,7 +3053,7 @@ export function App() {
                 </div>
               ) : (
                 <div className="mt-5 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                  {paged.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} priority={i === 0} />)}
+                  {paged.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} priority={i === 0} />)}
                 </div>
               )}
 
@@ -3062,7 +3105,7 @@ export function App() {
                 <button type="button" onClick={() => { setFeed("Trending"); openListing({ kind: "feed", name: "Trending" }); }} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mx-auto mt-3 flex w-full max-w-[760px] flex-col gap-6">
-                {trending.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} rank={i + 1} priority={i === 0} />)}
+                {trending.map((v, i) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} rank={i + 1} priority={i === 0} />)}
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Trending"); openListing({ kind: "feed", name: "Trending" }); }} />
             </section>
@@ -3075,7 +3118,7 @@ export function App() {
                 <button type="button" onClick={() => openListing({ kind: "feed", name: "New" })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                {latestHome.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} badge={v.days <= 6 ? "NEW" : undefined} />)}
+                {latestHome.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} badge={v.days <= 6 ? "NEW" : undefined} />)}
               </div>
               {!showAll && (chip === "All" ? newest.length : newest.filter((v) => v.category === chip || v.tags.includes(chip.toLowerCase())).length) > 24 && (
                 <div className="mt-7 text-center">
@@ -3135,7 +3178,7 @@ export function App() {
                 <button type="button" onClick={() => openListing({ kind: "category", name: becauseCat })} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                {becauseList.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                {becauseList.map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => openListing({ kind: "category", name: becauseCat })} />
             </section>
@@ -3148,7 +3191,7 @@ export function App() {
                 <button type="button" onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} className="py-1 text-[13px] text-[var(--dim)]">{btnLabel("seeAll", "See all")}</button>
               </div>
               <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                {topRated.slice(0, 8).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} />)}
+                {topRated.slice(0, 8).map((v) => <VideoCard key={v.id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} />)}
               </div>
             <NextButton label={btnLabel("next", "Next")} onClick={() => { setFeed("Top rated"); openListing({ kind: "feed", name: "Top rated" }); }} />
             </section>
@@ -3306,7 +3349,7 @@ export function App() {
                 </div>
                 {sec.keys.length === 0 ? <p className="mt-2 text-[var(--dim)]">{sec.empty}</p> : (
                   <div className="mt-3 mx-auto flex w-full max-w-[760px] flex-col gap-6">
-                    {sec.keys.map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} /> : null; })}
+                    {sec.keys.map((id) => { const v = byId(id); return v ? <VideoCard key={id} v={v} onOpen={openVideo} liked={likes.includes(v.id)} onToggleLike={() => toggle.mutate({ kind: "like", itemKey: v.id })} onOpenListing={openListing} /> : null; })}
                   </div>
                 )}
               </div>
@@ -3478,7 +3521,7 @@ export function App() {
       )}
 
       {/* ===== BOTTOM TAB BAR — identical on mobile & desktop ===== */}
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-black/97 pb-safe backdrop-blur">
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-[var(--surface)]/97 pb-safe backdrop-blur">
         <div className="mx-auto grid max-w-6xl grid-cols-5 px-2">
           {bottomTabs.map((t) => {
             const active = navActive === t.key && !drawer && !authView;

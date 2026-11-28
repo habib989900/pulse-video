@@ -134,7 +134,7 @@ function ATextarea({ label, value, onChange, placeholder, rows = 3 }: { label: s
 function ACheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex cursor-pointer items-center gap-2.5 text-sm font-semibold text-zinc-200">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" /> {label}
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" /> {label}
     </label>
   );
 }
@@ -739,7 +739,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
 
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label className="flex cursor-pointer items-center gap-2 py-1 text-sm font-semibold text-zinc-200">
-                  <input type="checkbox" aria-label="Select all matching videos" checked={allFilteredSelected} onChange={toggleSelectAll} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
+                  <input type="checkbox" aria-label="Select all matching videos" checked={allFilteredSelected} onChange={toggleSelectAll} className="h-5 w-5 shrink-0 accent-[var(--accent)]" />
                   Select all matching ({filteredVideos.length})
                 </label>
                 {selectedIds.length > 0 && <span className="text-sm font-semibold text-[var(--accent)]">{selectedIds.length} selected</span>}
@@ -799,7 +799,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
               <div className="mt-4 space-y-2.5">
                 {filteredVideos.slice(0, vShow).map((v) => (
                   <div key={v.id} className={`flex items-center gap-3 rounded-2xl border bg-[var(--surface)] p-3 ${selectedIds.includes(v.id) ? "border-[var(--accent)]" : "border-[var(--border)]"}`}>
-                    <input type="checkbox" aria-label={`Select video: ${v.title}`} checked={selectedIds.includes(v.id)} onChange={() => toggleSelect(v.id)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
+                    <input type="checkbox" aria-label={`Select video: ${v.title}`} checked={selectedIds.includes(v.id)} onChange={() => toggleSelect(v.id)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" />
                     <div className="w-24 shrink-0 sm:w-32"><Thumb v={v} /></div>
                     <div className="min-w-0 flex-1">
                       <p className="line-clamp-1 text-sm font-bold text-white">{v.title}</p>
@@ -844,7 +844,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label className="flex cursor-pointer items-center gap-2 py-1 text-sm font-semibold text-zinc-200">
-                  <input type="checkbox" aria-label={`Select all ${taxTab}`} checked={allTaxSelected} onChange={toggleTaxSelectAll} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
+                  <input type="checkbox" aria-label={`Select all ${taxTab}`} checked={allTaxSelected} onChange={toggleTaxSelectAll} className="h-5 w-5 shrink-0 accent-[var(--accent)]" />
                   Select all {taxTab} ({taxItems.length})
                 </label>
                 {taxSelected.length > 0 && <span className="text-sm font-semibold text-[var(--accent)]">{taxSelected.length} selected</span>}
@@ -874,7 +874,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
                       </>
                     ) : (
                       <>
-                        <input type="checkbox" aria-label={`Select ${taxSingular}: ${item.name}`} checked={taxSelected.includes(item.name)} onChange={() => toggleTaxSelect(item.name)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" />
+                        <input type="checkbox" aria-label={`Select ${taxSingular}: ${item.name}`} checked={taxSelected.includes(item.name)} onChange={() => toggleTaxSelect(item.name)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" />
                         {taxTab === "models" && st.modelPhotos?.[item.name] ? <img src={st.modelPhotos[item.name]} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-white/15" /> : null}
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{item.name}</span>
                         <span className="text-xs text-[var(--dim)]">{item.count} videos</span>
@@ -951,7 +951,7 @@ export function AdminPanel({ initial, onSave, onReset, onExit, onOpenVideo, flas
                   </div>
                   {csvRows.length > 100 && <p className="mt-2 text-[13px] text-[var(--dim)]">+{csvRows.length - 100} more rows not shown in the preview.</p>}
                   <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm font-semibold text-zinc-200">
-                    <input type="checkbox" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} className="h-5 w-5 shrink-0 accent-[#f43f5e]" /> Update existing videos (match by embed link)
+                    <input type="checkbox" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} className="h-5 w-5 shrink-0 accent-[var(--accent)]" /> Update existing videos (match by embed link)
                   </label>
                   <button type="button" disabled={saveDisabled} onClick={doImport} className="mt-4 rounded-full bg-[var(--accent)] px-7 py-3 font-display text-sm font-black text-white transition active:scale-95 disabled:opacity-40">Import {csvRows.length} row{csvRows.length === 1 ? "" : "s"}</button>
                 </>

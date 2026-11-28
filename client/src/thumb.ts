@@ -53,3 +53,15 @@ export function fullThumbUrl(url: string | null | undefined): string | null {
   if (!m) return url;
   return `https://www.freepornvideo.sex/contents/videos_screenshots/${m[1]}/${m[2]}/preview.jpg`;
 }
+/** Hover-preview video for a freepornvideos.xxx video: the source
+ * publishes a short preview clip for every video at
+ *   https://cast.freepornvideos.xxx/preview/<id>.mp4
+ * (the same data-preview the source site's own cards use). Other
+ * hosts publish no preview clip, so they get none — the card just
+ * keeps its thumbnail on hover. */
+const XXX_EMBED_RE = /^https?:\/\/(?:www\.)?freepornvideos\.xxx\/embed\/(\d+)\/?$/i;
+export function previewUrlFor(v: { embedUrl?: string | null }): string | null {
+  if (!v.embedUrl) return null;
+  const m = XXX_EMBED_RE.exec(v.embedUrl);
+  return m ? `https://cast.freepornvideos.xxx/preview/${m[1]}.mp4` : null;
+}
