@@ -439,6 +439,13 @@ export function resolveEmbed(raw: string): { kind: "iframe" | "file"; src: strin
      playing link from it, so a pasted video-page link plays natively. */
   const pg = s.match(/perfectgirls\.xxx\/video\/(\d+)/i);
   if (pg && pg[1]) return { kind: "iframe", src: `https://www.perfectgirls.xxx/embed/${pg[1]}` };
+  /* joysporn.com has no separate embed player — the video page itself
+     is the source: the resolver reads its per-quality tokens and
+     builds the direct MP4s, so a pasted /view/<id> link plays
+     natively. Keep the page URL as the iframe src (the fallback if
+     resolution fails — the page carries its own player). */
+  const jp = s.match(/joysporn\.com\/view\/(\d+)/i);
+  if (jp && jp[1]) return { kind: "iframe", src: `https://joysporn.com/view/${jp[1]}` };
   const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{6,})/);
   if (yt && yt[1]) return { kind: "iframe", src: `https://www.youtube.com/embed/${yt[1]}` };
   const vm = s.match(/vimeo\.com\/(?:video\/)?(\d+)/);

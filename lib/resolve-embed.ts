@@ -547,6 +547,59 @@ export async function resolveEmbedFile(embedUrl: string): Promise<EmbedFileResul
         expiresAt: parseExpiryFromUrl(fastEntry.url),
       });
     }
+    /* joysporn.com — no embed player exists; the video page itself
+       carries the direct files, verified live 2026-11-28 against
+       /view/9409. The page's #loadlinks divs carry one data-c token
+       per quality: "hash;quality;size;194;<id>;<expiry>;<token>;<n>"
+       (e.g. 1080p/720p/480p/240p). The player's own script builds
+       the playback URL as
+       "https://<n>.vstor.top/whpvid/<expiry>/<token>/<1000*floor(id/1000)>/<id>/<id>[ _<quality>].mp4"
+       — the 720p file carries no suffix, the others take
+       "_<quality>". Those URLs answer 206 video/mp4 to a Range
+       request with no Referer (verified for 720p/1080p/480p), so
+       they play direct here with no proxy. The resolver parses the
+       data-c tokens off the video page and returns one MP4 stream
+       per quality, playback starting at 480p (the site's fast
+       default). */
+    if (/(^|\.)joysporn\.com$/i.test(u.hostname)) {
+      const view = u.pathname.match(/^\/view\/(\d+)/);
+      if (!view || !view[1]) return empty;
+      const pageRes = await fetch(u.toString(), {
+        headers: browserHeaders,
+        redirect: "follow",
+        signal: fetchTimeout(),
+      });
+      if (!pageRes.ok) return empty;
+      const html = await pageRes.text();
+      type JStream = { url: string; label: string; hls: boolean; height: number };
+      const byHeight = new Map<number, JStream>();
+      for (const m of html.matchAll(/data-c="([^"]+)"/g)) {
+        const parts = (m[1] as string).split(";");
+        /* hash;quality;size;194;id;expiry;token;n */
+        if (parts.length < 8) continue;
+        const [, quality, , , idStr, expiry, token, n] = parts as [string, string, string, string, string, string, string, string];
+        const h = parseInt(quality.replace(/\D/g, ""), 10);
+        const id = parseInt(idStr, 10);
+        if (!quality || !Number.isFinite(h) || h <= 0 || !Number.isFinite(id) || id <= 0 || !expiry || !token || !n) continue;
+        if (byHeight.has(h)) continue;
+        const dir = Math.floor(id / 1000) * 1000;
+        const suffix = quality === "720p" ? "" : `_${quality}`;
+        const url = `https://${n}.vstor.top/whpvid/${expiry}/${token}/${dir}/${id}/${id}${suffix}.mp4`;
+        byHeight.set(h, { url, label: quality, hls: false, height: h });
+      }
+      const sorted = [...byHeight.values()].sort((a, b) => a.height - b.height);
+      if (sorted.length === 0) return empty;
+      const streams = sorted.map(({ url, label, hls }) => ({ url, label, hls }));
+      const fastEntry = sorted.find((s) => s.height === 480) ?? sorted[0]!;
+      const hdEntry = sorted[sorted.length - 1]!;
+      return done({
+        fileUrl: fastEntry.url,
+        hdFileUrl: hdEntry.url !== fastEntry.url ? hdEntry.url : null,
+        fastLabel: fastEntry.label,
+        streams,
+        expiresAt: null,
+      });
+    }
     if (u.hostname !== "www.freepornvideo.sex" && u.hostname !== "freepornvideo.sex") return empty;
     const watch = u.pathname.match(/^\/xxx\/(\d+)/);
     if (watch && watch[1]) {
