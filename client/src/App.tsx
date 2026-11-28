@@ -1743,7 +1743,16 @@ export function App() {
     setDlBusy(true);
     try {
       const emb = resolveEmbed(current.embedUrl);
-      const res = await qc.fetchQuery({ queryKey: ["embedFile", current.id], queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }) });
+      const fetchResolve = () => qc.fetchQuery({ queryKey: ["embedFile", current.id], queryFn: () => api.resolveEmbedFile({ embedUrl: emb ? emb.src : "" }), retry: 2 });
+      let res = await fetchResolve();
+      /* The player caches an empty resolve when its own attempt hit a
+         transient failure (Preview cold start / blocked function IP):
+         that empty result is fresh for 5 min, so a plain fetch would
+         return it again. One forced re-resolve gives it a second shot. */
+      if (!(res.streams ?? []).length && !res.fileUrl) {
+        await qc.invalidateQueries({ queryKey: ["embedFile", current.id] });
+        res = await fetchResolve();
+      }
       const mp4s = (res.streams ?? []).filter((st) => !st.hls);
       const pick = mp4s.find((st) => st.label === "720p") ?? [...mp4s].sort((a, b) => streamHeight(b.label) - streamHeight(a.label))[0];
       const url = pick?.url ?? res.fileUrl;
